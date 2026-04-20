@@ -1,0 +1,34 @@
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs and local runtime
+*.log
+tmp/
+.env
+.env.*
+!.env.example
+
+# Node / web app
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# Python / agent experiments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Backup tool state and test data
+.syncthing-test/
+.kopia-test/
+.restic-test/
+test-data/
+restore-output/
+
