@@ -8,9 +8,9 @@ Current repository status:
 
 - A docs-first feasibility and implementation package exists.
 - A Vite + React web prototype exists in `apps/web`.
-- A Tauri + React + Rust desktop client scaffold exists in `apps/client`.
+- A Tauri + React + Rust desktop client scaffold exists in `apps/client`, with mock/offline setup flows and Rust-backed safety planning.
 - The client safety model is local-first: secrets stay local, telemetry is allowlisted, and source folders must never be synced directly to peers.
-- Release foundations have started under AGPL-3.0-only, but production release readiness still requires license inventory, signing, bundled tool checksums, and Rust verification on a machine with Cargo.
+- Release foundations have started under AGPL-3.0-only, but production release readiness still requires license inventory, signing, real bundled tool checksums, and Rust verification on a machine with Cargo.
 
 ### Project Progress
 
@@ -20,10 +20,10 @@ Progress is estimated by usable project capability, not by lines of code. The pr
 | --- | ---: | --- | --- | --- |
 | Feasibility and product docs | `████████░░` 80% | Strong foundation | Feasibility study, architecture, implementation map, risk register, control plan, runbooks, ADRs | Keep docs updated as real POC results arrive |
 | Web coordination prototype | `██████░░░░` 60% | Usable local prototype | Dashboard, matching, pacts, health, restore drills, incidents, admin, shared mock state | Real backend, auth, persistence, API contracts, production UX pass |
-| Desktop client scaffold | `████░░░░░░` 40% | Scaffold started | Tauri + React UI shell, Rust core modules, config/health/redaction/safety/tool-manifest models | Real service orchestration, keychain, Kopia/Syncthing manager, Tauri command coverage |
-| Backup safety controls | `█████░░░░░` 50% | Core rules modeled | Protected gate, restore failure mapping, canary mismatch handling, folder safety validation, telemetry allowlist docs | End-to-end backup/sync/restore automation and real-world failure tests |
+| Desktop client scaffold | `██████░░░░` 60% | Interactive scaffold | Tauri + React UI, shared app state, setup wizard, backup plan, Syncthing safety view, restore drill, health checks, logs, settings | Real service orchestration, OS keychain, persistent config store, production Tauri packaging |
+| Backup safety controls | `███████░░░` 70% | Core controls wired in mock/offline mode | Protected gate, restore failure mapping, canary mismatch handling, repository check failure mapping, folder safety validation, telemetry consent wiring | End-to-end backup/sync/restore automation and real-world failure tests |
 | Release and open-source foundation | `███░░░░░░░` 30% | Started | AGPL-3.0-only notice, third-party notices placeholder, package scaffolds | Full AGPL text/audit, dependency license inventory, signing, checksums, release process |
-| Syncthing/Kopia integration | `██░░░░░░░░` 20% | Designed, not implemented | Tool choice and architecture documented; manifest model exists | Bundle pinned binaries, verify checksums, run Kopia/Syncthing safely from client |
+| Syncthing/Kopia integration | `████░░░░░░` 40% | Planning layer implemented | Redacted Kopia command planner, Syncthing API plan builder, source-folder rejection, bundled-tool manifest scaffold, real SHA-256 verifier | Bundle pinned binaries, fill checksums, execute Kopia/Syncthing safely from client |
 | Infrastructure and backend | `█░░░░░░░░░` 10% | Future work | Syncthing discovery/relay notes, web app mock state | API, database, auth, pairing tokens, health ingestion, relay/discovery operations |
 | Real backup POC evidence | `█░░░░░░░░░` 10% | Not yet proven in repo | POC and restore drill runbooks | Run two-machine Kopia + Syncthing trial, record results, prove restore from peer copy |
 | Production readiness | `░░░░░░░░░░` 0% | Not production-ready | Clear safety posture and launch constraints | Security review, legal review, reliability metrics, support process, paid-marketplace controls |
@@ -31,7 +31,8 @@ Progress is estimated by usable project capability, not by lines of code. The pr
 Next engineering priorities:
 
 - Run Rust checks for the client on a machine with Cargo.
-- Build the real Kopia/Syncthing tool manager and keychain-backed secret storage.
+- Bundle pinned Kopia/Syncthing binaries, fill real checksums, and verify sidecar execution.
+- Build keychain-backed secret storage and persistent local config.
 - Connect client health reports to the web app once the API exists.
 - Keep the first launch invite-only and barter-based.
 
@@ -52,8 +53,8 @@ This repository starts as a docs-first project. The feasibility conclusion is:
 
 ```text
 apps/
-  web/                 Future marketplace and matching application
-  client/              Future Tauri + Rust desktop client app
+  web/                 Marketplace and matching prototype
+  client/              Tauri + Rust desktop client scaffold
   agent/               Headless/NAS agent notes for future packaging
 docs/
   client-app/          Client app architecture, safety, config, and release docs

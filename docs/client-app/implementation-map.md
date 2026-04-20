@@ -69,7 +69,7 @@ Decision gate:
 
 Goal: make safe setup understandable.
 
-Status: scaffold started with placeholder client UI views. Real onboarding behavior still needs implementation.
+Status: mock/offline onboarding is implemented in the client scaffold. The wizard supports role-aware setup, source/repository safety checks, hosted-storage quota input, retention settings, recovery-key confirmation, health-report consent, and validation-before-save. Native file pickers, persistent config, keychain storage, and real pairing remain future work.
 
 Deliverables:
 
@@ -95,16 +95,19 @@ Exit criteria:
 - User can complete a mock setup.
 - Unsafe setup paths are blocked with clear messages.
 - No paid marketplace or cloud storage features appear.
+- Health-report consent defaults off and persists into local app state.
 
 ## Phase 3: Bundled Kopia And Syncthing Manager
 
 Goal: make tool management predictable and safe.
 
+Status: manifest modeling, resource manifest scaffolding, tool status types, and real SHA-256 verification exist. Actual Kopia/Syncthing binaries and release checksums are not bundled yet, so production readiness still fails closed until release tooling supplies verified artifacts.
+
 Deliverables:
 
 - Tool manifest.
-- Kopia and Syncthing version detection.
-- Checksum verification.
+- Kopia and Syncthing version/status detection.
+- SHA-256 checksum verification.
 - Tool status screen.
 - Fail-closed behavior for missing or mismatched binaries.
 - README notes for updating pinned tool versions.
@@ -124,6 +127,8 @@ Exit criteria:
 ## Phase 4: Health Checks And Restore Drill Automation
 
 Goal: prove backup safety controls work end to end.
+
+Status: mock/offline health and restore drill flows are wired into shared app state. Repository check failure, canary mismatch, and restore failure map to Critical and block Protected status in the UI. Real Kopia backup/check/restore execution and real Syncthing status polling remain future work.
 
 Deliverables:
 

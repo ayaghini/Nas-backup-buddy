@@ -1,16 +1,199 @@
-import { AlertTriangle, CheckCircle, HardDrive, Lock, Shield, Users, Wand2 } from 'lucide-react';
+import { useState } from 'react';
+import {
+  AlertTriangle, CheckCircle, ChevronLeft, ChevronRight, HardDrive,
+  Info, Lock, Shield, Sliders, Users, Wand2,
+} from 'lucide-react';
+import { useApp } from '../context/AppContext';
+import type { SetupDraftConfig, UserRole } from '../lib/types';
+import { validateSetupConfig } from '../lib/tauri-bridge';
 
-const STEPS = [
-  { id: 1, label: 'Choose role',              icon: <Users size={16} />,     done: false },
-  { id: 2, label: 'Select source folders',    icon: <HardDrive size={16} />, done: false },
-  { id: 3, label: 'Set repository location',  icon: <Lock size={16} />,      done: false },
-  { id: 4, label: 'Configure hosted storage', icon: <HardDrive size={16} />, done: false },
-  { id: 5, label: 'Save recovery key',        icon: <Shield size={16} />,    done: false },
-  { id: 6, label: 'Configure retention',      icon: <Shield size={16} />,    done: false },
-  { id: 7, label: 'Pair with web app',        icon: <CheckCircle size={16} />, done: false },
-];
+type Step = 'role' | 'source-folders' | 'repository' | 'hosted-storage' | 'recovery-key' | 'retention' | 'health-consent' | 'summary';
+
+const STEPS: Step[] = ['role', 'source-folders', 'repository', 'hosted-storage', 'recovery-key', 'retention', 'health-consent', 'summary'];
+
+function stepLabel(s: Step): string {
+  switch (s) {
+    case 'role': return 'Choose role';
+    case 'source-folders': return 'Source folders';
+    case 'repository': return 'Repository location';
+    case 'hosted-storage': return 'Hosted storage';
+    case 'recovery-key': return 'Save recovery key';
+    case 'retention': return 'Retention policy';
+    case 'health-consent': return 'Health reporting';
+    case 'summary': return 'Summary';
+  }
+}
+
+function isHostRole(role: UserRole): boolean {
+  return role === 'storage_host' || role === 'reciprocal_match';
+}
+function isOwnerRole(role: UserRole): boolean {
+  return role === 'data_owner' || role === 'reciprocal_match';
+}
+
+const INITIAL_DRAFT: SetupDraftConfig = {
+  role: 'data_owner',
+  source_folders: [],
+  repository_path: '',
+  hosted_storage_path: '',
+  hosted_quota_gb: 0,
+  retention_keep_last: 5,
+  retention_keep_daily: 7,
+  retention_keep_weekly: 4,
+  retention_keep_monthly: 3,
+  health_report_consent: false,
+  pairing_token_ref: null,
+  web_api_url: null,
+};
+
+function safetyCheck(draft: SetupDraftConfig): string[] {
+  const errors: string[] = [];
+  if (isOwnerRole(draft.role)) {
+    if (draft.source_folders.length === 0) errors.push('At least one source folder is required.');
+    if (!draft.repository_path) errors.push('Encrypted repository path is required.');
+    if (draft.repository_path && draft.source_folders.some(s => s === draft.repository_path))
+      errors.push('Repository path must not equal a source folder.');
+    if (draft.repository_path && draft.source_folders.some(s => draft.repository_path.startsWith(s + '/')))
+      errors.push('Repository path must not be inside a source folder.');
+    if (draft.repository_path && draft.source_folders.some(s => s.startsWith(draft.repository_path + '/')))
+      errors.push('Source folder must not be inside the repository path.');
+    if (draft.repository_path && draft.source_folders.some(s => s === draft.repository_path))
+      errors.push('Source path must not be used as a Syncthing shared folder — only the repository path is allowed.');
+  }
+  if (isHostRole(draft.role)) {
+    if (!draft.hosted_storage_path) errors.push('Hosted peer-storage path is required.');
+    if (draft.hosted_quota_gb <= 0) errors.push('Hosted quota must be greater than 0 GB.');
+    if (draft.hosted_storage_path && draft.source_folders.some(s => draft.hosted_storage_path.startsWith(s + '/')))
+      errors.push('Hosted storage must not be inside a source folder.');
+  }
+  if (draft.retention_keep_last < 1) errors.push('Retention keep_last must be at least 1.');
+  return errors;
+}
 
 export function SetupWizard() {
+  const { applyWizardConfig, setRecoveryKeyConfirmed, setHealthReportConsent } = useApp();
+  const [stepIdx, setStepIdx] = useState(0);
+  const [draft, setDraft] = useState<SetupDraftConfig>(INITIAL_DRAFT);
+  const [newFolder, setNewFolder] = useState('');
+  const [completed, setCompleted] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+
+  const step = STEPS[stepIdx];
+  const isFirst = stepIdx === 0;
+  const isLast = stepIdx === STEPS.length - 1;
+
+  function prev() { setStepIdx(i => Math.max(0, i - 1)); }
+
+  async function next() {
+    const stepErrors = validateStep(step, draft);
+    if (stepErrors.length > 0) { setValidationErrors(stepErrors); return; }
+    setValidationErrors([]);
+
+    if (!isLast) {
+      setStepIdx(i => i + 1);
+      return;
+    }
+
+    // Final step: run full validation before touching shared state
+    // 1. Client-side safety check
+    const clientErrors = safetyCheck(draft);
+    if (clientErrors.length > 0) {
+      setValidationErrors(clientErrors);
+      return;
+    }
+
+    // 2. Backend validation (Rust validate_config via Tauri; no-ops gracefully in browser)
+    setSaving(true);
+    try {
+      await validateSetupConfig({
+        role: draft.role,
+        source_folders: draft.source_folders,
+        repository_path: draft.repository_path || null,
+        hosted_storage_path: draft.hosted_storage_path || null,
+        hosted_quota_gb: draft.hosted_quota_gb,
+        retention_keep_last: draft.retention_keep_last,
+        retention_keep_daily: draft.retention_keep_daily,
+        retention_keep_weekly: draft.retention_keep_weekly,
+        retention_keep_monthly: draft.retention_keep_monthly,
+        web_api_url: draft.web_api_url,
+        pairing_token_ref: draft.pairing_token_ref,
+      });
+    } catch (e: unknown) {
+      setValidationErrors([String(e)]);
+      setSaving(false);
+      return;
+    }
+
+    // 3. All validation passed — persist to shared state
+    applyWizardConfig(draft);
+    setRecoveryKeyConfirmed(isOwnerRole(draft.role));
+    setHealthReportConsent(draft.health_report_consent);
+    setSaving(false);
+    setCompleted(true);
+  }
+
+  function validateStep(s: Step, d: SetupDraftConfig): string[] {
+    switch (s) {
+      case 'role': return !d.role ? ['Select a role.'] : [];
+      case 'source-folders':
+        if (!isOwnerRole(d.role)) return [];
+        return d.source_folders.length === 0 ? ['Add at least one source folder.'] : [];
+      case 'repository':
+        if (!isOwnerRole(d.role)) return [];
+        if (!d.repository_path) return ['Enter the encrypted repository path.'];
+        if (d.source_folders.some(s => d.repository_path === s))
+          return ['Repository path must not be the same as a source folder.'];
+        if (d.source_folders.some(s => d.repository_path.startsWith(s + '/')))
+          return ['Repository path must not be inside a source folder.'];
+        if (d.source_folders.some(s => s.startsWith(d.repository_path + '/')))
+          return ['A source folder must not be inside the repository path.'];
+        return [];
+      case 'hosted-storage':
+        if (!isHostRole(d.role)) return [];
+        if (!d.hosted_storage_path) return ['Enter the hosted peer-storage path.'];
+        if (d.hosted_quota_gb <= 0) return ['Enter a quota greater than 0 GB.'];
+        return [];
+      case 'recovery-key':
+        if (!isOwnerRole(d.role)) return [];
+        return [];
+      case 'retention':
+        return d.retention_keep_last < 1 ? ['Keep-last must be at least 1.'] : [];
+      default: return [];
+    }
+  }
+
+  if (completed) {
+    return (
+      <div className="p-6 space-y-6 max-w-xl">
+        <div className="flex items-center gap-2">
+          <Wand2 size={18} className="text-sky-400" />
+          <h1 className="text-base font-semibold text-slate-100">Setup Wizard</h1>
+        </div>
+        <div className="flex items-start gap-2.5 p-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5">
+          <CheckCircle size={16} className="text-emerald-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm text-emerald-300 font-medium">Setup configuration saved.</p>
+            <p className="text-xs text-emerald-300/70 mt-1">
+              Client-side and backend validation passed. Next step: run a test backup, then a restore drill.
+            </p>
+            {draft.health_report_consent && (
+              <p className="text-xs text-sky-300/70 mt-1">
+                Health reporting enabled — allowlisted metadata will be sent to the web app when connected.
+              </p>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={() => { setCompleted(false); setStepIdx(0); setDraft(INITIAL_DRAFT); setValidationErrors([]); }}
+          className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
+        >
+          Start over
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 space-y-6 max-w-xl">
       <div className="flex items-center gap-2">
@@ -18,43 +201,411 @@ export function SetupWizard() {
         <h1 className="text-base font-semibold text-slate-100">Setup Wizard</h1>
       </div>
 
-      <div className="flex items-start gap-2.5 p-3 rounded-lg border border-amber-500/20 bg-amber-500/5">
-        <AlertTriangle size={14} className="text-amber-400 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-amber-300/80 leading-relaxed">
-          <strong>Placeholder — not yet interactive.</strong> The wizard UI will be implemented when
-          the Tauri backend commands are ready. See <code>src-tauri/src/lib.rs</code> for the
-          command stubs.
+      {/* Progress */}
+      <div className="flex items-center gap-1">
+        {STEPS.map((s, i) => (
+          <div
+            key={s}
+            className={`h-1 flex-1 rounded-full transition-colors ${i <= stepIdx ? 'bg-sky-500' : 'bg-slate-800'}`}
+          />
+        ))}
+      </div>
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-slate-400">Step {stepIdx + 1} of {STEPS.length}</span>
+        <span className="text-slate-300 font-medium">{stepLabel(step)}</span>
+      </div>
+
+      {/* Step content */}
+      <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-4 min-h-48">
+        {step === 'role' && (
+          <RoleStep role={draft.role} onChange={role => setDraft(d => ({ ...d, role }))} />
+        )}
+        {step === 'source-folders' && (
+          <SourceFoldersStep
+            role={draft.role}
+            folders={draft.source_folders}
+            newFolder={newFolder}
+            setNewFolder={setNewFolder}
+            onAdd={() => {
+              const f = newFolder.trim();
+              if (f && !draft.source_folders.includes(f)) {
+                setDraft(d => ({ ...d, source_folders: [...d.source_folders, f] }));
+                setNewFolder('');
+              }
+            }}
+            onRemove={folder => setDraft(d => ({ ...d, source_folders: d.source_folders.filter(x => x !== folder) }))}
+          />
+        )}
+        {step === 'repository' && (
+          <RepositoryStep
+            role={draft.role}
+            value={draft.repository_path}
+            onChange={v => setDraft(d => ({ ...d, repository_path: v }))}
+          />
+        )}
+        {step === 'hosted-storage' && (
+          <HostedStorageStep
+            role={draft.role}
+            path={draft.hosted_storage_path}
+            quota={draft.hosted_quota_gb}
+            onPathChange={v => setDraft(d => ({ ...d, hosted_storage_path: v }))}
+            onQuotaChange={v => setDraft(d => ({ ...d, hosted_quota_gb: v }))}
+          />
+        )}
+        {step === 'recovery-key' && (
+          <RecoveryKeyStep role={draft.role} />
+        )}
+        {step === 'retention' && (
+          <RetentionStep
+            keepLast={draft.retention_keep_last}
+            keepDaily={draft.retention_keep_daily}
+            keepWeekly={draft.retention_keep_weekly}
+            keepMonthly={draft.retention_keep_monthly}
+            onChange={(k, v) => setDraft(d => ({ ...d, [k]: v }))}
+          />
+        )}
+        {step === 'health-consent' && (
+          <HealthConsentStep
+            consent={draft.health_report_consent}
+            onChange={v => setDraft(d => ({ ...d, health_report_consent: v }))}
+          />
+        )}
+        {step === 'summary' && (
+          <SummaryStep draft={draft} />
+        )}
+      </div>
+
+      {/* Validation errors */}
+      {validationErrors.length > 0 && (
+        <div className="flex items-start gap-2 p-3 rounded-lg border border-red-500/20 bg-red-500/5">
+          <AlertTriangle size={13} className="text-red-400 flex-shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            {validationErrors.map((e, i) => (
+              <p key={i} className="text-xs text-red-300">{e}</p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Safety notice */}
+      <div className="flex items-start gap-2 p-3 rounded-lg border border-sky-500/10 bg-sky-500/5">
+        <Info size={13} className="text-sky-400 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-sky-300/70 leading-relaxed">
+          Source folders are never shared directly with peers. Syncthing transports only the encrypted repository.
         </p>
       </div>
 
-      <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
-        <div className="px-4 py-3 bg-slate-800/40 border-b border-slate-800">
-          <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wide">Onboarding Steps</h3>
-        </div>
-        <div className="divide-y divide-slate-800">
-          {STEPS.map(step => (
-            <div key={step.id} className="flex items-center gap-3 px-4 py-3">
-              <span className="w-6 h-6 rounded-full bg-slate-800 text-slate-400 text-xs font-mono
-                flex items-center justify-center flex-shrink-0">
-                {step.id}
-              </span>
-              <span className="text-slate-500 flex-shrink-0">{step.icon}</span>
-              <span className="text-sm text-slate-400">{step.label}</span>
-              <span className="ml-auto text-xs text-slate-600">Pending</span>
+      {/* Navigation */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={prev}
+          disabled={isFirst}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          <ChevronLeft size={15} /> Back
+        </button>
+        <button
+          onClick={() => { void next(); }}
+          disabled={saving}
+          className="flex items-center gap-1.5 px-4 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white text-sm rounded-lg transition-colors"
+        >
+          {saving ? 'Validating…' : isLast ? 'Save configuration' : 'Continue'} {!isLast && !saving && <ChevronRight size={15} />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Step components ────────────────────────────────────────────────────────────
+
+function RoleStep({ role, onChange }: { role: UserRole; onChange: (r: UserRole) => void }) {
+  const options: Array<{ value: UserRole; label: string; desc: string; icon: React.ReactNode }> = [
+    { value: 'data_owner', label: 'Data Owner', desc: 'Back up your data to an encrypted repository synced to a peer.', icon: <HardDrive size={16} /> },
+    { value: 'storage_host', label: 'Storage Host', desc: 'Offer spare storage for another user\'s encrypted repository.', icon: <Shield size={16} /> },
+    { value: 'reciprocal_match', label: 'Reciprocal Match', desc: 'Both back up your own data and host a peer\'s encrypted repository.', icon: <Users size={16} /> },
+  ];
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-medium text-slate-200">Choose your role</h3>
+      {options.map(opt => (
+        <button
+          key={opt.value}
+          onClick={() => onChange(opt.value)}
+          className={`w-full flex items-start gap-3 p-3 rounded-lg border text-left transition-colors ${
+            role === opt.value
+              ? 'border-sky-500/50 bg-sky-500/10'
+              : 'border-slate-700 bg-slate-800/30 hover:border-slate-600'
+          }`}
+        >
+          <span className={`mt-0.5 flex-shrink-0 ${role === opt.value ? 'text-sky-400' : 'text-slate-500'}`}>{opt.icon}</span>
+          <div>
+            <div className="text-sm font-medium text-slate-200">{opt.label}</div>
+            <div className="text-xs text-slate-400 mt-0.5 leading-relaxed">{opt.desc}</div>
+          </div>
+          {role === opt.value && <CheckCircle size={14} className="text-sky-400 ml-auto flex-shrink-0 mt-0.5" />}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SourceFoldersStep({ role, folders, newFolder, setNewFolder, onAdd, onRemove }: {
+  role: UserRole; folders: string[]; newFolder: string;
+  setNewFolder: (v: string) => void; onAdd: () => void; onRemove: (f: string) => void;
+}) {
+  if (!isOwnerRole(role)) {
+    return (
+      <div className="flex items-start gap-2.5 p-3 rounded-lg border border-sky-500/20 bg-sky-500/5">
+        <Info size={13} className="text-sky-400 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-sky-300/80">
+          Source folders are not required for the Storage Host role. Skip this step.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-medium text-slate-200">Source folders</h3>
+      <p className="text-xs text-slate-400 leading-relaxed">
+        These folders will be backed up by Kopia. They will never be shared directly with peers —
+        only the encrypted repository is synced via Syncthing.
+      </p>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={newFolder}
+          onChange={e => setNewFolder(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && onAdd()}
+          placeholder="/home/user/documents"
+          className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+        />
+        <button
+          onClick={onAdd}
+          className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-sm text-slate-200 rounded transition-colors"
+        >
+          Add
+        </button>
+      </div>
+      {folders.length > 0 && (
+        <div className="space-y-1">
+          {folders.map(f => (
+            <div key={f} className="flex items-center gap-2 bg-slate-800/50 rounded px-3 py-1.5">
+              <span className="text-xs font-mono text-slate-300 flex-1 truncate">{f}</span>
+              <button onClick={() => onRemove(f)} className="text-slate-500 hover:text-red-400 text-xs transition-colors">remove</button>
             </div>
           ))}
         </div>
-      </div>
+      )}
+    </div>
+  );
+}
 
-      <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Safety Constraints</h3>
-        <div className="space-y-2 text-xs text-slate-400 leading-relaxed">
-          <p>• Source folders will never be shared directly with peers.</p>
-          <p>• Repository path must not be inside a source folder, and vice versa.</p>
-          <p>• Backups are encrypted by Kopia before any sync occurs.</p>
-          <p>• Your recovery password is never stored on this device in plaintext.</p>
-          <p>• The web app receives health metrics only — never file names or contents.</p>
+function RepositoryStep({ role, value, onChange }: { role: UserRole; value: string; onChange: (v: string) => void }) {
+  if (!isOwnerRole(role)) {
+    return (
+      <div className="flex items-start gap-2.5 p-3 rounded-lg border border-sky-500/20 bg-sky-500/5">
+        <Info size={13} className="text-sky-400 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-sky-300/80">Repository path is not required for the Storage Host role. Skip this step.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-medium text-slate-200">Encrypted repository path</h3>
+      <p className="text-xs text-slate-400 leading-relaxed">
+        Kopia will write encrypted snapshots to this directory. This path will be synced to your peer via Syncthing —
+        not your source folders.
+      </p>
+      <div className="flex items-center gap-2.5 p-2.5 rounded border border-amber-500/20 bg-amber-500/5">
+        <AlertTriangle size={13} className="text-amber-400 flex-shrink-0" />
+        <p className="text-xs text-amber-300/80">Must not be inside a source folder, and source folders must not be inside it.</p>
+      </div>
+      <input
+        type="text"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder="/home/user/.nasbb-repo"
+        className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+      />
+      <div className="flex items-start gap-2 p-2.5 rounded border border-sky-500/10 bg-sky-500/5">
+        <Lock size={12} className="text-sky-400 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-sky-300/70">This path will become the Syncthing shared folder. Your source folders will never be shared.</p>
+      </div>
+    </div>
+  );
+}
+
+function HostedStorageStep({ role, path, quota, onPathChange, onQuotaChange }: {
+  role: UserRole; path: string; quota: number;
+  onPathChange: (v: string) => void; onQuotaChange: (v: number) => void;
+}) {
+  if (!isHostRole(role)) {
+    return (
+      <div className="flex items-start gap-2.5 p-3 rounded-lg border border-sky-500/20 bg-sky-500/5">
+        <Info size={13} className="text-sky-400 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-sky-300/80">Hosted storage is not required for the Data Owner role. Skip this step.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-medium text-slate-200">Hosted peer-storage</h3>
+      <p className="text-xs text-slate-400 leading-relaxed">
+        This is where your peer's encrypted repository will be stored. The data is encrypted before it arrives — you cannot read it.
+      </p>
+      <div>
+        <label className="text-xs text-slate-400 mb-1 block">Peer-storage path</label>
+        <input
+          type="text"
+          value={path}
+          onChange={e => onPathChange(e.target.value)}
+          placeholder="/mnt/peer-storage"
+          className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+        />
+      </div>
+      <div>
+        <label className="text-xs text-slate-400 mb-1 block">Quota (GB)</label>
+        <input
+          type="number"
+          min={1}
+          value={quota || ''}
+          onChange={e => onQuotaChange(parseInt(e.target.value, 10) || 0)}
+          placeholder="500"
+          className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+        />
+      </div>
+    </div>
+  );
+}
+
+function RecoveryKeyStep({ role }: { role: UserRole }) {
+  if (!isOwnerRole(role)) {
+    return (
+      <div className="flex items-start gap-2.5 p-3 rounded-lg border border-sky-500/20 bg-sky-500/5">
+        <Info size={13} className="text-sky-400 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-sky-300/80">Recovery key confirmation is not required for the Storage Host role. Skip this step.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-medium text-slate-200">Save your recovery key</h3>
+      <div className="flex items-start gap-2.5 p-3 rounded-lg border border-amber-500/20 bg-amber-500/5">
+        <AlertTriangle size={13} className="text-amber-400 flex-shrink-0 mt-0.5" />
+        <div className="text-xs text-amber-300/80 leading-relaxed space-y-1">
+          <p><strong>Your backup password or recovery key is never stored by this application.</strong></p>
+          <p>If you lose it, your backup data cannot be recovered. Store it in a password manager or printed copy in a safe location — outside this device.</p>
         </div>
+      </div>
+      <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
+        <div className="flex items-start gap-2"><CheckCircle size={13} className="text-emerald-400 flex-shrink-0 mt-0.5" /><span>Password is stored only in the OS keychain — never in the config file.</span></div>
+        <div className="flex items-start gap-2"><CheckCircle size={13} className="text-emerald-400 flex-shrink-0 mt-0.5" /><span>Never sent to the web API or any external service.</span></div>
+        <div className="flex items-start gap-2"><CheckCircle size={13} className="text-emerald-400 flex-shrink-0 mt-0.5" /><span>Required for every restore — including restore drills.</span></div>
+      </div>
+      <p className="text-xs text-slate-500">Click Continue once you have saved your recovery key/password outside this device.</p>
+    </div>
+  );
+}
+
+function RetentionStep({ keepLast, keepDaily, keepWeekly, keepMonthly, onChange }: {
+  keepLast: number; keepDaily: number; keepWeekly: number; keepMonthly: number;
+  onChange: (key: string, value: number) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-medium text-slate-200">Retention policy</h3>
+      <p className="text-xs text-slate-400">How many snapshots Kopia keeps. Older snapshots outside policy are pruned.</p>
+      <div className="grid grid-cols-2 gap-3">
+        {[
+          { key: 'retention_keep_last', label: 'Keep last N', value: keepLast },
+          { key: 'retention_keep_daily', label: 'Daily (days)', value: keepDaily },
+          { key: 'retention_keep_weekly', label: 'Weekly (weeks)', value: keepWeekly },
+          { key: 'retention_keep_monthly', label: 'Monthly (months)', value: keepMonthly },
+        ].map(({ key, label, value }) => (
+          <div key={key}>
+            <label className="text-xs text-slate-400 mb-1 block">{label}</label>
+            <input
+              type="number"
+              min={key === 'retention_keep_last' ? 1 : 0}
+              value={value}
+              onChange={e => onChange(key, parseInt(e.target.value, 10) || 0)}
+              className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-sky-500"
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HealthConsentStep({ consent, onChange }: { consent: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-medium text-slate-200">Health reporting consent</h3>
+      <p className="text-xs text-slate-400 leading-relaxed">
+        The web app can receive allowlisted operational metadata to power health dashboards and reputation.
+        This is off by default. You can change this in Settings at any time.
+      </p>
+      <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-3 space-y-1.5 text-xs text-slate-400">
+        <p className="font-medium text-slate-300 mb-2">If enabled, only these fields are sent:</p>
+        {['Client version', 'Last backup status and timestamp', 'Last sync status and timestamp', 'Repository size', 'Available quota percent', 'Peer online/offline state'].map(f => (
+          <div key={f} className="flex items-center gap-2"><CheckCircle size={11} className="text-emerald-500/60 flex-shrink-0" />{f}</div>
+        ))}
+        <div className="mt-2 pt-2 border-t border-slate-700">
+          <p className="text-red-400/70 font-medium mb-1">Never sent:</p>
+          {['Passwords or keys', 'Source file names or contents', 'Full local source paths', 'Raw log output'].map(f => (
+            <div key={f} className="flex items-center gap-2 text-red-400/60"><AlertTriangle size={11} className="flex-shrink-0" />{f}</div>
+          ))}
+        </div>
+      </div>
+      <button
+        onClick={() => onChange(!consent)}
+        className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-sm transition-colors ${
+          consent ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : 'border-slate-700 bg-slate-800/30 text-slate-400'
+        }`}
+      >
+        <div className={`w-4 h-4 rounded border flex items-center justify-center ${consent ? 'bg-emerald-500 border-emerald-500' : 'border-slate-600'}`}>
+          {consent && <CheckCircle size={10} className="text-white" />}
+        </div>
+        Enable health reporting to web app (optional)
+      </button>
+    </div>
+  );
+}
+
+function SummaryStep({ draft }: { draft: SetupDraftConfig }) {
+  const clientErrors = safetyCheck(draft);
+  const rows: Array<[string, string]> = [
+    ['Role', draft.role.replace(/_/g, ' ')],
+    ['Source folders', draft.source_folders.length > 0 ? `${draft.source_folders.length} folder(s) — paths local only` : 'None'],
+    ['Repository', draft.repository_path ? '[configured — path local only]' : 'Not set'],
+    ['Hosted storage', draft.hosted_storage_path ? '[configured — path local only]' : 'Not set'],
+    ['Hosted quota', draft.hosted_quota_gb > 0 ? `${draft.hosted_quota_gb} GB` : 'Not set'],
+    ['Retention keep_last', String(draft.retention_keep_last)],
+    ['Retention keep_daily', String(draft.retention_keep_daily)],
+    ['Recovery key', 'Stored in OS keychain only — never sent'],
+    ['Health reporting', draft.health_report_consent ? 'Enabled' : 'Disabled (default)'],
+  ];
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-medium text-slate-200">Configuration summary</h3>
+      {clientErrors.length > 0 && (
+        <div className="p-3 rounded-lg border border-red-500/20 bg-red-500/5 space-y-1">
+          <p className="text-xs text-red-400 font-medium">Fix before saving:</p>
+          {clientErrors.map((e, i) => <p key={i} className="text-xs text-red-300">• {e}</p>)}
+        </div>
+      )}
+      <div className="space-y-1">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex items-center justify-between text-xs py-1 border-b border-slate-800/50 last:border-0">
+            <span className="text-slate-500">{k}</span>
+            <span className="text-slate-300 font-mono">{v}</span>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-start gap-2 p-2.5 rounded border border-sky-500/10 bg-sky-500/5">
+        <Sliders size={12} className="text-sky-400 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-sky-300/70">All secrets remain local. No data is sent to the web app unless health reporting is enabled.</p>
       </div>
     </div>
   );

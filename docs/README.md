@@ -6,7 +6,7 @@ Start here when working on the project.
 
 - Feasibility and architecture docs are in place.
 - `apps/web` contains the current coordination web prototype.
-- `apps/client` contains the current Tauri + Rust desktop client scaffold.
+- `apps/client` contains the current Tauri + Rust desktop client scaffold with mock/offline setup, Kopia/Syncthing planning, restore drill, health checks, and fail-closed bundled-tool verification scaffolding.
 - Release foundations have started with AGPL-3.0-only and a third-party notices placeholder.
 - The project is not production-ready.
 
@@ -40,6 +40,7 @@ Start here when working on the project.
 
 - [Proof Of Concept Runbook](runbooks/proof-of-concept.md)
 - [Restore Drill Runbook](runbooks/restore-drill.md)
+- [Client Local Kopia + Syncthing Test Runbook](runbooks/client-local-kopia-syncthing-test.md)
 
 ## Templates
 

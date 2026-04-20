@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
+import { AppContextProvider } from './context/AppContext';
 import {
   Activity,
   Archive,
@@ -36,6 +37,7 @@ const NAV = [
 
 export function App() {
   return (
+    <AppContextProvider>
     <BrowserRouter>
       <div className="flex h-screen overflow-hidden bg-slate-950">
         {/* Sidebar */}
@@ -90,5 +92,6 @@ export function App() {
         </main>
       </div>
     </BrowserRouter>
+    </AppContextProvider>
   );
 }

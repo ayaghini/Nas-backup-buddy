@@ -7,6 +7,8 @@ license = "AGPL-3.0-only"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+hex = "0.4"
 thiserror = "1"
 toml = "0.8"
 

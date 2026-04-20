@@ -72,6 +72,11 @@ pub enum ConfigError {
     InvalidHostedQuota(UserRole),
     #[error("hosted storage path must not be inside a source folder: hosted={0:?} src={1:?}")]
     HostedStorageInsideSource(PathBuf, PathBuf),
+    #[error(
+        "source path must not be used as a Syncthing shared folder: {0:?} — \
+         only the encrypted repository path is allowed"
+    )]
+    SourcePathPlannedAsSyncthingFolder(PathBuf),
 }
 
 fn is_host_role(role: &UserRole) -> bool {
@@ -144,6 +149,30 @@ pub fn validate_config(cfg: &NasbbConfig) -> Result<(), ConfigError> {
     }
 
     Ok(())
+}
+
+impl NasbbConfig {
+    /// Validate that a proposed Syncthing folder path does not overlap with any
+    /// configured source folder.
+    ///
+    /// Must be called before configuring any Syncthing folder. The only allowed
+    /// Syncthing folder for a data-owner is the encrypted `repository_path`.
+    pub fn validate_syncthing_folder_not_source(
+        &self,
+        proposed_path: &PathBuf,
+    ) -> Result<(), ConfigError> {
+        for src in &self.source_folders {
+            if proposed_path == src
+                || proposed_path.starts_with(src)
+                || src.starts_with(proposed_path.as_path())
+            {
+                return Err(ConfigError::SourcePathPlannedAsSyncthingFolder(
+                    proposed_path.clone(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -360,6 +389,62 @@ mod tests {
         assert_eq!(restored.hosted_quota_gb, original.hosted_quota_gb);
         assert_eq!(restored.hosted_storage_path, original.hosted_storage_path);
     }
+
+    // ── Syncthing folder safety ────────────────────────────────────────────────
+
+    #[test]
+    fn syncthing_folder_rejects_source_path() {
+        let cfg = owner_config();
+        let source = PathBuf::from("/home/user/documents");
+        assert!(matches!(
+            cfg.validate_syncthing_folder_not_source(&source),
+            Err(ConfigError::SourcePathPlannedAsSyncthingFolder(_))
+        ));
+    }
+
+    #[test]
+    fn syncthing_folder_rejects_subfolder_of_source() {
+        let cfg = owner_config();
+        let subpath = PathBuf::from("/home/user/documents/subdir");
+        assert!(matches!(
+            cfg.validate_syncthing_folder_not_source(&subpath),
+            Err(ConfigError::SourcePathPlannedAsSyncthingFolder(_))
+        ));
+    }
+
+    #[test]
+    fn syncthing_folder_rejects_parent_of_source() {
+        let cfg = owner_config();
+        let parent = PathBuf::from("/home/user");
+        assert!(matches!(
+            cfg.validate_syncthing_folder_not_source(&parent),
+            Err(ConfigError::SourcePathPlannedAsSyncthingFolder(_))
+        ));
+    }
+
+    #[test]
+    fn syncthing_folder_allows_repository_path() {
+        let cfg = owner_config();
+        let repo = PathBuf::from("/home/user/.nasbb-repo");
+        assert!(cfg.validate_syncthing_folder_not_source(&repo).is_ok());
+    }
+
+    #[test]
+    fn syncthing_folder_allows_unrelated_path() {
+        let cfg = owner_config();
+        let unrelated = PathBuf::from("/mnt/peer-storage");
+        assert!(cfg.validate_syncthing_folder_not_source(&unrelated).is_ok());
+    }
+
+    #[test]
+    fn storage_host_no_source_folders_allows_any_syncthing_path() {
+        let cfg = host_config();
+        assert!(cfg.source_folders.is_empty());
+        let path = PathBuf::from("/mnt/peer-storage");
+        assert!(cfg.validate_syncthing_folder_not_source(&path).is_ok());
+    }
+
+    // ── TOML round-trip ───────────────────────────────────────────────────────
 
     #[test]
     fn toml_does_not_serialize_secret_values() {
