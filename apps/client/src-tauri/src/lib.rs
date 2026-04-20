@@ -157,15 +157,26 @@ fn resolve_tool_status(
 fn get_tool_status(app: tauri::AppHandle) -> ToolStatusResponse {
     use tauri::Manager;
 
-    let manifest: ToolManifest = serde_json::from_str(TOOL_MANIFEST_JSON)
-        .unwrap_or_else(|_| ToolManifest { manifest_version: 1, tools: vec![] });
+    let manifest: ToolManifest =
+        serde_json::from_str(TOOL_MANIFEST_JSON).unwrap_or_else(|_| ToolManifest {
+            manifest_version: 1,
+            tools: vec![],
+        });
     let platform = current_platform();
     let resource_dir = app.path().resource_dir().ok();
 
-    let kopia =
-        resolve_tool_status(&manifest, &ToolName::Kopia, &platform, resource_dir.as_deref());
-    let syncthing =
-        resolve_tool_status(&manifest, &ToolName::Syncthing, &platform, resource_dir.as_deref());
+    let kopia = resolve_tool_status(
+        &manifest,
+        &ToolName::Kopia,
+        &platform,
+        resource_dir.as_deref(),
+    );
+    let syncthing = resolve_tool_status(
+        &manifest,
+        &ToolName::Syncthing,
+        &platform,
+        resource_dir.as_deref(),
+    );
 
     ToolStatusResponse {
         kopia: tool_status_str(&kopia).to_string(),
@@ -184,10 +195,7 @@ fn validate_setup_config(config: NasbbConfig) -> Result<(), String> {
 /// Return the Kopia command plan for a repository setup.
 /// All sensitive values are replaced by [REDACTED] in display output.
 #[tauri::command]
-fn plan_kopia_repository(
-    repo_path: String,
-    engine_path: String,
-) -> Vec<CommandPlanSummary> {
+fn plan_kopia_repository(repo_path: String, engine_path: String) -> Vec<CommandPlanSummary> {
     let planner = KopiaPlanner::new(engine_path);
     vec![
         CommandPlanSummary {
@@ -275,10 +283,7 @@ fn run_mock_repository_check(should_pass: Option<bool>) -> MockCheckResult {
 /// A checksum mismatch maps to Critical health level.
 /// A restore failure maps to Critical health level.
 #[tauri::command]
-fn run_mock_restore_drill(
-    expected_checksum: String,
-    observed_checksum: String,
-) -> MockDrillResult {
+fn run_mock_restore_drill(expected_checksum: String, observed_checksum: String) -> MockDrillResult {
     let checksums_match = !expected_checksum.is_empty()
         && !observed_checksum.is_empty()
         && expected_checksum == observed_checksum;
@@ -301,8 +306,16 @@ fn run_mock_restore_drill(
 
     let raw_log = format!(
         "restore_drill result={result_label} expected={} observed={} health={}",
-        if expected_checksum.is_empty() { "[empty]" } else { "[REDACTED]" },
-        if observed_checksum.is_empty() { "[empty]" } else { "[REDACTED]" },
+        if expected_checksum.is_empty() {
+            "[empty]"
+        } else {
+            "[REDACTED]"
+        },
+        if observed_checksum.is_empty() {
+            "[empty]"
+        } else {
+            "[REDACTED]"
+        },
         health_label
     );
 
@@ -313,10 +326,15 @@ fn run_mock_restore_drill(
         "canary_method: sha256".to_string(),
     ];
     if matches!(drill_result, RestoreDrillResult::CanaryMismatch) {
-        audit.push("ACTION: Preserve all logs. Do not prune snapshots. Investigate immediately.".to_string());
+        audit.push(
+            "ACTION: Preserve all logs. Do not prune snapshots. Investigate immediately."
+                .to_string(),
+        );
     }
     if matches!(drill_result, RestoreDrillResult::Fail) {
-        audit.push("ACTION: Check restore destination permissions and available disk space.".to_string());
+        audit.push(
+            "ACTION: Check restore destination permissions and available disk space.".to_string(),
+        );
     }
 
     MockDrillResult {

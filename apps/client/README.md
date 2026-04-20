@@ -40,6 +40,7 @@ npm run tauri build
 ```
 
 These commands require the Tauri/Rust toolchain to be installed locally.
+The macOS arm64 build currently produces both a `.app` bundle and a `.dmg` smoke-test artifact.
 
 ## Rust Commands
 
@@ -61,25 +62,25 @@ The client currently includes:
 - Shared React context for setup state, health state, tool status, wizard configuration, logs, and mock operation results.
 - Rust core modules for role-aware config validation, health threshold mapping, redaction, source-folder safety, Kopia command planning, Syncthing API planning, integration readiness, and bundled tool manifest modeling.
 - Real SHA-256 verification logic for bundled tool checks.
-- A bundled-tool manifest scaffold in `src-tauri/resources/tool-manifest.json`; checksums are intentionally empty until release tooling supplies real binaries.
+- A bundled-tool manifest in `src-tauri/resources/tool-manifest.json`; macOS arm64 Kopia and Syncthing entries point at packaged `resources/binaries/*` paths and are filled with real checksums, while other platforms intentionally fail closed until release tooling supplies real binaries.
+- Pinned macOS arm64 Kopia and Syncthing binaries under `src-tauri/resources/binaries/`.
 - Mock/offline backup, repository check, and restore drill flows that update health and Protected-gate state.
 
 ## Current Progress
 
 | Area | Progress | Notes |
 | --- | ---: | --- |
-| React/Tauri UI scaffold | `██████░░░░` 60% | Main views are interactive in mock/offline mode. |
-| Rust safety core | `███████░░░` 70% | Config, health, redaction, tool status, command planning, and readiness models exist. Cargo verification is still needed here. |
-| Kopia/Syncthing planning | `████░░░░░░` 40% | Plans and redaction exist; real tool execution is not enabled. |
+| React/Tauri UI scaffold | `███████░░░` 70% | Main views are interactive in mock/offline mode and Rust checks pass. |
+| Rust safety core | `████████░░` 80% | Config, health, redaction, tool status, command planning, and readiness models have passing Cargo checks. |
+| Kopia/Syncthing planning | `█████░░░░░` 50% | Plans, redaction, macOS arm64 bundled binaries, and checksum verification exist; real guarded execution is not enabled. |
 | Restore drill flow | `██████░░░░` 60% | Mock pass, canary mismatch, and failure paths update health state. Real Kopia restore is future work. |
-| Release readiness | `██░░░░░░░░` 20% | Manifest/resource scaffold exists; signing, binaries, checksums, and license inventory remain. |
+| Release readiness | `███░░░░░░░` 30% | Manifest/resources and macOS arm64 tool inventory exist; signing, all-platform binaries, and complete license inventory remain. |
 
 ## Known Gaps
 
-- Real Kopia and Syncthing binaries are not bundled yet.
-- Manifest checksums are placeholders, so bundled tool readiness will fail closed until release tooling fills them.
+- Real Kopia and Syncthing execution is not wired into user actions yet.
+- Only macOS arm64 Kopia and Syncthing binaries are bundled; other platform manifest entries intentionally fail closed until release tooling fills them.
 - Real web API pairing is not implemented yet.
 - OS keychain integration is not implemented yet.
-- Rust checks were not run in the current desktop environment because Cargo is unavailable.
 - Release signing is not configured yet.
 - Third-party license inventory needs audit before public release.

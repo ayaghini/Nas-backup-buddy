@@ -19,6 +19,10 @@ build/
 .turbo/
 *.tsbuildinfo
 
+# Rust / Tauri generated output
+target/
+apps/client/src-tauri/gen/
+
 # Python / agent experiments
 __pycache__/
 *.py[cod]
@@ -31,4 +35,3 @@ venv/
 .restic-test/
 test-data/
 restore-output/
-

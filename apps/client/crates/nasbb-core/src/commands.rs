@@ -66,13 +66,15 @@ pub struct KopiaPlanner {
 
 impl KopiaPlanner {
     pub fn new(executable: impl Into<String>) -> Self {
-        Self { executable: executable.into() }
+        Self {
+            executable: executable.into(),
+        }
     }
 
     /// Plan: detect the installed Kopia version.
     pub fn detect_version(&self) -> CommandPlan {
-        let args = vec!["version".to_string()];
-        let display = format!("{} version", self.executable);
+        let args = vec!["--version".to_string()];
+        let display = format!("{} --version", self.executable);
         CommandPlan {
             executable: self.executable.clone(),
             args,
@@ -170,10 +172,7 @@ impl KopiaPlanner {
             executable: self.executable.clone(),
             args,
             env_vars: vec![EnvVar::sensitive("KOPIA_PASSWORD")],
-            display_command: format!(
-                "{} restore {} [REDACTED]",
-                self.executable, snapshot_id
-            ),
+            display_command: format!("{} restore {} [REDACTED]", self.executable, snapshot_id),
         }
     }
 }
@@ -205,7 +204,9 @@ pub fn validate_syncthing_folder_path(
             || proposed_path.starts_with(src_path)
             || src_path.starts_with(proposed_path)
         {
-            return Err(SyncthingPlanError::SourceFolderRejected(proposed.to_string()));
+            return Err(SyncthingPlanError::SourceFolderRejected(
+                proposed.to_string(),
+            ));
         }
     }
     Ok(())
@@ -231,7 +232,9 @@ pub struct SyncthingPlanner {
 
 impl SyncthingPlanner {
     pub fn new(api_url: impl Into<String>) -> Self {
-        Self { api_url: api_url.into() }
+        Self {
+            api_url: api_url.into(),
+        }
     }
 
     /// Plan: get Syncthing version.
@@ -261,10 +264,7 @@ impl SyncthingPlanner {
         SyncthingApiPlan {
             method: "POST".to_string(),
             endpoint: format!("{}/rest/config/devices", self.api_url),
-            body_summary: format!(
-                r#"{{"deviceID":"{}","name":"nasbb-peer"}}"#,
-                peer_device_id
-            ),
+            body_summary: format!(r#"{{"deviceID":"{}","name":"nasbb-peer"}}"#, peer_device_id),
             requires_api_key: true,
             display_command: format!(
                 "POST /rest/config/devices  deviceID={peer_device_id}  [X-API-Key: REDACTED]"
@@ -386,8 +386,14 @@ mod tests {
     #[test]
     fn kopia_create_repo_password_not_in_args() {
         let plan = kopia().create_repository("/home/user/.nasbb-repo");
-        assert!(plan.args.iter().all(|a| !a.to_lowercase().contains("password")));
-        assert!(plan.env_vars.iter().any(|e| e.name == "KOPIA_PASSWORD" && e.sensitive && e.value.is_none()));
+        assert!(plan
+            .args
+            .iter()
+            .all(|a| !a.to_lowercase().contains("password")));
+        assert!(plan
+            .env_vars
+            .iter()
+            .any(|e| e.name == "KOPIA_PASSWORD" && e.sensitive && e.value.is_none()));
     }
 
     #[test]
@@ -451,16 +457,20 @@ mod tests {
         let folder_plan = syncthing()
             .create_repository_folder("nasbb-repo", "/home/user/.nasbb-repo", &[])
             .unwrap();
-        let plans: Vec<&str> = vec![
-            &syncthing().detect_version().display_command,
-            &syncthing().get_local_device_id().display_command,
-            &syncthing().add_peer_device("PEER-ID-1").display_command,
-            &folder_plan.display_command,
-            &syncthing().check_folder_status("nasbb-repo").display_command,
-            &syncthing().check_peer_connection("PEER-ID-1").display_command,
-            &syncthing().pause_folder("nasbb-repo").display_command,
-            &syncthing().resume_folder("nasbb-repo").display_command,
-            &syncthing().remove_folder("nasbb-repo").display_command,
+        let plans: Vec<String> = vec![
+            syncthing().detect_version().display_command,
+            syncthing().get_local_device_id().display_command,
+            syncthing().add_peer_device("PEER-ID-1").display_command,
+            folder_plan.display_command,
+            syncthing()
+                .check_folder_status("nasbb-repo")
+                .display_command,
+            syncthing()
+                .check_peer_connection("PEER-ID-1")
+                .display_command,
+            syncthing().pause_folder("nasbb-repo").display_command,
+            syncthing().resume_folder("nasbb-repo").display_command,
+            syncthing().remove_folder("nasbb-repo").display_command,
         ];
         for display in plans {
             assert!(
@@ -473,33 +483,48 @@ mod tests {
     #[test]
     fn syncthing_rejects_exact_source_folder_as_shared_folder() {
         let sources = ["/home/user/documents"];
-        let result = syncthing()
-            .create_repository_folder("nasbb-repo", "/home/user/documents", &sources);
-        assert!(matches!(result, Err(SyncthingPlanError::SourceFolderRejected(_))));
+        let result =
+            syncthing().create_repository_folder("nasbb-repo", "/home/user/documents", &sources);
+        assert!(matches!(
+            result,
+            Err(SyncthingPlanError::SourceFolderRejected(_))
+        ));
     }
 
     #[test]
     fn syncthing_rejects_subfolder_of_source() {
         let sources = ["/home/user/documents"];
-        let result = syncthing()
-            .create_repository_folder("nasbb-repo", "/home/user/documents/subdir", &sources);
-        assert!(matches!(result, Err(SyncthingPlanError::SourceFolderRejected(_))));
+        let result = syncthing().create_repository_folder(
+            "nasbb-repo",
+            "/home/user/documents/subdir",
+            &sources,
+        );
+        assert!(matches!(
+            result,
+            Err(SyncthingPlanError::SourceFolderRejected(_))
+        ));
     }
 
     #[test]
     fn syncthing_rejects_parent_of_source() {
         // A parent of a source folder would expose the source listing
         let result = validate_syncthing_folder_path("/home/user", &["/home/user/documents"]);
-        assert!(matches!(result, Err(SyncthingPlanError::SourceFolderRejected(_))));
+        assert!(matches!(
+            result,
+            Err(SyncthingPlanError::SourceFolderRejected(_))
+        ));
     }
 
     #[test]
     fn syncthing_kopia_repo_path_is_the_allowed_data_owner_folder() {
         // This is the key safety constraint: the repository path (not a source folder) is allowed
         let sources = ["/home/user/documents", "/home/user/photos"];
-        let result = syncthing()
-            .create_repository_folder("nasbb-repo", "/home/user/.nasbb-repo", &sources);
-        assert!(result.is_ok(), "Repository path must be allowed as Syncthing folder");
+        let result =
+            syncthing().create_repository_folder("nasbb-repo", "/home/user/.nasbb-repo", &sources);
+        assert!(
+            result.is_ok(),
+            "Repository path must be allowed as Syncthing folder"
+        );
     }
 
     #[test]
@@ -526,8 +551,8 @@ mod tests {
     fn syncthing_hosted_peer_path_is_allowed() {
         // Storage host's peer-storage path is not a source folder — must be allowed
         let sources: [&str; 0] = [];
-        let result = syncthing()
-            .create_repository_folder("peer-folder", "/mnt/peer-storage", &sources);
+        let result =
+            syncthing().create_repository_folder("peer-folder", "/mnt/peer-storage", &sources);
         assert!(result.is_ok());
     }
 }

@@ -102,7 +102,7 @@ export async function planKopiaRepository(
   } catch {
     const exe = enginePath || 'kopia';
     return [
-      { label: 'Detect version', display_command: `${exe} version` },
+      { label: 'Detect version', display_command: `${exe} --version` },
       { label: 'Create repository', display_command: `${exe} repository create filesystem --path [REDACTED]` },
       { label: 'Repository check', display_command: `${exe} repository check` },
       { label: 'Create snapshot', display_command: `${exe} snapshot create [REDACTED]` },

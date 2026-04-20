@@ -24,6 +24,6 @@
     "active": true,
     "targets": "all",
     "icon": [],
-    "resources": ["resources/*"]
+    "resources": ["resources/tool-manifest.json", "resources/binaries/*"]
   }
 }

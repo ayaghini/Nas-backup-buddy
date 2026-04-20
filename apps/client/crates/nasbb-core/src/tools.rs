@@ -118,7 +118,10 @@ pub fn validate_manifest(manifest: &ToolManifest) -> Result<(), ManifestError> {
                 platform: entry.platform.to_string(),
             });
         }
-        if seen.iter().any(|(n, p)| *n == &entry.name && *p == &entry.platform) {
+        if seen
+            .iter()
+            .any(|(n, p)| *n == &entry.name && *p == &entry.platform)
+        {
             return Err(ManifestError::DuplicateEntry {
                 tool: entry.name.to_string(),
                 platform: entry.platform.to_string(),
@@ -148,7 +151,7 @@ pub fn get_tool_entry<'a>(
 
 /// Detect whether a named binary is accessible on the system PATH.
 ///
-/// Attempts to run `<name> version` and inspects the launch error to distinguish
+/// Attempts to run `<name> --version` and inspects the launch error to distinguish
 /// "binary not found" from other failures. Returns `ToolStatus::Present` if the
 /// binary launches (even with a non-zero exit code), `ToolStatus::Missing` if it
 /// cannot be found.
@@ -157,7 +160,7 @@ pub fn get_tool_entry<'a>(
 /// against the tool manifest checksum before using it in backup/sync operations.
 pub fn detect_tool_on_path(name: &str) -> ToolStatus {
     use std::process::Command;
-    match Command::new(name).arg("version").output() {
+    match Command::new(name).arg("--version").output() {
         Ok(_) => ToolStatus::Present,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => ToolStatus::Missing,
         // Binary was found but failed to run for another reason — still present
@@ -240,21 +243,30 @@ mod tests {
     fn rejects_unsupported_version() {
         let mut m = sample_manifest();
         m.manifest_version = 2;
-        assert!(matches!(validate_manifest(&m), Err(ManifestError::UnsupportedVersion(2))));
+        assert!(matches!(
+            validate_manifest(&m),
+            Err(ManifestError::UnsupportedVersion(2))
+        ));
     }
 
     #[test]
     fn rejects_empty_checksum() {
         let mut m = sample_manifest();
         m.tools[0].sha256 = String::new();
-        assert!(matches!(validate_manifest(&m), Err(ManifestError::EmptyChecksum { .. })));
+        assert!(matches!(
+            validate_manifest(&m),
+            Err(ManifestError::EmptyChecksum { .. })
+        ));
     }
 
     #[test]
     fn rejects_duplicate_entry() {
         let mut m = sample_manifest();
         m.tools.push(m.tools[0].clone());
-        assert!(matches!(validate_manifest(&m), Err(ManifestError::DuplicateEntry { .. })));
+        assert!(matches!(
+            validate_manifest(&m),
+            Err(ManifestError::DuplicateEntry { .. })
+        ));
     }
 
     #[test]
@@ -302,13 +314,19 @@ mod tests {
     #[test]
     fn check_tool_status_kopia_missing_when_path_does_not_exist() {
         let path = std::path::Path::new("/nonexistent/kopia");
-        assert_eq!(check_tool_status(&kopia_entry(), Some(path)), ToolStatus::Missing);
+        assert_eq!(
+            check_tool_status(&kopia_entry(), Some(path)),
+            ToolStatus::Missing
+        );
     }
 
     #[test]
     fn check_tool_status_syncthing_missing_when_path_does_not_exist() {
         let path = std::path::Path::new("/nonexistent/syncthing");
-        assert_eq!(check_tool_status(&syncthing_entry(), Some(path)), ToolStatus::Missing);
+        assert_eq!(
+            check_tool_status(&syncthing_entry(), Some(path)),
+            ToolStatus::Missing
+        );
     }
 
     #[test]
@@ -317,7 +335,10 @@ mod tests {
         entry.sha256 = String::new();
         // Use a temp file so path exists
         let tmp = tempfile::NamedTempFile::new().unwrap();
-        assert_eq!(check_tool_status(&entry, Some(tmp.path())), ToolStatus::ChecksumMismatch);
+        assert_eq!(
+            check_tool_status(&entry, Some(tmp.path())),
+            ToolStatus::ChecksumMismatch
+        );
     }
 
     #[test]
@@ -326,7 +347,10 @@ mod tests {
         // Valid hex format but definitely wrong value for any real file
         entry.sha256 = "0".repeat(64);
         let tmp = tempfile::NamedTempFile::new().unwrap();
-        assert_eq!(check_tool_status(&entry, Some(tmp.path())), ToolStatus::ChecksumMismatch);
+        assert_eq!(
+            check_tool_status(&entry, Some(tmp.path())),
+            ToolStatus::ChecksumMismatch
+        );
     }
 
     #[test]
@@ -338,7 +362,10 @@ mod tests {
 
         let mut entry = kopia_entry();
         entry.sha256 = actual_hash;
-        assert_eq!(check_tool_status(&entry, Some(tmp.path())), ToolStatus::Ready);
+        assert_eq!(
+            check_tool_status(&entry, Some(tmp.path())),
+            ToolStatus::Ready
+        );
     }
 
     #[test]
@@ -350,7 +377,10 @@ mod tests {
 
         let mut entry = syncthing_entry();
         entry.sha256 = actual_hash;
-        assert_eq!(check_tool_status(&entry, Some(tmp.path())), ToolStatus::Ready);
+        assert_eq!(
+            check_tool_status(&entry, Some(tmp.path())),
+            ToolStatus::Ready
+        );
     }
 
     #[test]

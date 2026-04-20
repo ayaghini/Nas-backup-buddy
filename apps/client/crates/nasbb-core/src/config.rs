@@ -237,7 +237,10 @@ mod tests {
     fn rejects_empty_source_folders() {
         let mut cfg = owner_config();
         cfg.source_folders = vec![];
-        assert!(matches!(validate_config(&cfg), Err(ConfigError::NoSourceFolders)));
+        assert!(matches!(
+            validate_config(&cfg),
+            Err(ConfigError::NoSourceFolders)
+        ));
     }
 
     #[test]
@@ -254,28 +257,40 @@ mod tests {
     fn rejects_repo_equal_to_source() {
         let mut cfg = owner_config();
         cfg.repository_path = Some(PathBuf::from("/home/user/documents"));
-        assert!(matches!(validate_config(&cfg), Err(ConfigError::DirectSourceShare(_))));
+        assert!(matches!(
+            validate_config(&cfg),
+            Err(ConfigError::DirectSourceShare(_))
+        ));
     }
 
     #[test]
     fn rejects_repo_inside_source() {
         let mut cfg = owner_config();
         cfg.repository_path = Some(PathBuf::from("/home/user/documents/backup-repo"));
-        assert!(matches!(validate_config(&cfg), Err(ConfigError::RepoInsideSource(_, _))));
+        assert!(matches!(
+            validate_config(&cfg),
+            Err(ConfigError::RepoInsideSource(_, _))
+        ));
     }
 
     #[test]
     fn rejects_source_inside_repo() {
         let mut cfg = owner_config();
         cfg.source_folders = vec![PathBuf::from("/home/user/.nasbb-repo/documents")];
-        assert!(matches!(validate_config(&cfg), Err(ConfigError::SourceInsideRepo(_, _))));
+        assert!(matches!(
+            validate_config(&cfg),
+            Err(ConfigError::SourceInsideRepo(_, _))
+        ));
     }
 
     #[test]
     fn rejects_zero_retention() {
         let mut cfg = owner_config();
         cfg.retention_keep_last = 0;
-        assert!(matches!(validate_config(&cfg), Err(ConfigError::InvalidRetention)));
+        assert!(matches!(
+            validate_config(&cfg),
+            Err(ConfigError::InvalidRetention)
+        ));
     }
 
     // ── StorageHost ───────────────────────────────────────────────────────────

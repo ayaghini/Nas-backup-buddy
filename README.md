@@ -20,18 +20,18 @@ Progress is estimated by usable project capability, not by lines of code. The pr
 | --- | ---: | --- | --- | --- |
 | Feasibility and product docs | `████████░░` 80% | Strong foundation | Feasibility study, architecture, implementation map, risk register, control plan, runbooks, ADRs | Keep docs updated as real POC results arrive |
 | Web coordination prototype | `██████░░░░` 60% | Usable local prototype | Dashboard, matching, pacts, health, restore drills, incidents, admin, shared mock state | Real backend, auth, persistence, API contracts, production UX pass |
-| Desktop client scaffold | `██████░░░░` 60% | Interactive scaffold | Tauri + React UI, shared app state, setup wizard, backup plan, Syncthing safety view, restore drill, health checks, logs, settings | Real service orchestration, OS keychain, persistent config store, production Tauri packaging |
+| Desktop client scaffold | `███████░░░` 70% | Interactive scaffold verified | Tauri + React UI, shared app state, setup wizard, backup plan, Syncthing safety view, restore drill, health checks, logs, settings, Rust checks passing | Real service orchestration, OS keychain, persistent config store, production Tauri packaging |
 | Backup safety controls | `███████░░░` 70% | Core controls wired in mock/offline mode | Protected gate, restore failure mapping, canary mismatch handling, repository check failure mapping, folder safety validation, telemetry consent wiring | End-to-end backup/sync/restore automation and real-world failure tests |
-| Release and open-source foundation | `███░░░░░░░` 30% | Started | AGPL-3.0-only notice, third-party notices placeholder, package scaffolds | Full AGPL text/audit, dependency license inventory, signing, checksums, release process |
-| Syncthing/Kopia integration | `████░░░░░░` 40% | Planning layer implemented | Redacted Kopia command planner, Syncthing API plan builder, source-folder rejection, bundled-tool manifest scaffold, real SHA-256 verifier | Bundle pinned binaries, fill checksums, execute Kopia/Syncthing safely from client |
+| Release and open-source foundation | `████░░░░░░` 40% | Started | AGPL-3.0-only notice, third-party notices inventory started, package scaffolds, macOS arm64 tool sources/checksums recorded | Full AGPL text/audit, dependency license inventory, signing, all-platform checksums, release process |
+| Syncthing/Kopia integration | `█████░░░░░` 50% | Local macOS arm64 binaries bundled | Redacted Kopia command planner, Syncthing API plan builder, source-folder rejection, real SHA-256 verifier, pinned macOS arm64 Kopia/Syncthing binaries | Execute Kopia/Syncthing safely from client, add all-platform binaries, keychain-backed secrets |
 | Infrastructure and backend | `█░░░░░░░░░` 10% | Future work | Syncthing discovery/relay notes, web app mock state | API, database, auth, pairing tokens, health ingestion, relay/discovery operations |
 | Real backup POC evidence | `█░░░░░░░░░` 10% | Not yet proven in repo | POC and restore drill runbooks | Run two-machine Kopia + Syncthing trial, record results, prove restore from peer copy |
 | Production readiness | `░░░░░░░░░░` 0% | Not production-ready | Clear safety posture and launch constraints | Security review, legal review, reliability metrics, support process, paid-marketplace controls |
 
 Next engineering priorities:
 
-- Run Rust checks for the client on a machine with Cargo.
-- Bundle pinned Kopia/Syncthing binaries, fill real checksums, and verify sidecar execution.
+- Wire guarded live execution for `kopia version` and Syncthing status checks using the bundled macOS arm64 binaries.
+- Add all-platform Kopia/Syncthing binaries and checksums when release packaging is ready.
 - Build keychain-backed secret storage and persistent local config.
 - Connect client health reports to the web app once the API exists.
 - Keep the first launch invite-only and barter-based.

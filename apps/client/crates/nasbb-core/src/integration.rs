@@ -161,7 +161,10 @@ impl ClientSetupState {
             }
         } else {
             if self.kopia_tool_status != ToolStatus::Ready {
-                blocking.push(format!("Kopia tool not ready: {:?}", self.kopia_tool_status));
+                blocking.push(format!(
+                    "Kopia tool not ready: {:?}",
+                    self.kopia_tool_status
+                ));
             }
             if self.syncthing_tool_status != ToolStatus::Ready {
                 blocking.push(format!(
@@ -175,9 +178,8 @@ impl ClientSetupState {
                 blocking.push("Kopia repository not configured".to_string());
             }
             KopiaRepositoryStatus::CheckFailed => {
-                blocking.push(
-                    "Kopia repository check failed — investigate immediately".to_string(),
-                );
+                blocking
+                    .push("Kopia repository check failed — investigate immediately".to_string());
             }
             _ => {}
         }
@@ -192,9 +194,8 @@ impl ClientSetupState {
             warnings.push("Syncthing folder is stale — peer data may be outdated".to_string());
         }
         if self.syncthing_folder.state == SyncthingState::NotConfigured {
-            warnings.push(
-                "Syncthing not yet configured — peer replication is inactive".to_string(),
-            );
+            warnings
+                .push("Syncthing not yet configured — peer replication is inactive".to_string());
         }
 
         let readiness = if !blocking.is_empty() {
@@ -283,7 +284,10 @@ mod tests {
         let result = state.check_readiness();
         assert_eq!(result.readiness, SetupReadiness::Warning);
         assert!(result.blocking_reasons.is_empty());
-        assert!(result.warning_reasons.iter().any(|r| r.contains("Syncthing")));
+        assert!(result
+            .warning_reasons
+            .iter()
+            .any(|r| r.contains("Syncthing")));
     }
 
     // offline_mode: false → tool issues block setup
@@ -304,7 +308,10 @@ mod tests {
         state.syncthing_tool_status = ToolStatus::ChecksumMismatch;
         let result = state.check_readiness();
         assert_eq!(result.readiness, SetupReadiness::Blocked);
-        assert!(result.blocking_reasons.iter().any(|r| r.contains("Syncthing")));
+        assert!(result
+            .blocking_reasons
+            .iter()
+            .any(|r| r.contains("Syncthing")));
     }
 
     #[test]
@@ -313,7 +320,10 @@ mod tests {
         state.recovery_key_confirmed = false;
         let result = state.check_readiness();
         assert_eq!(result.readiness, SetupReadiness::Blocked);
-        assert!(result.blocking_reasons.iter().any(|r| r.contains("recovery")));
+        assert!(result
+            .blocking_reasons
+            .iter()
+            .any(|r| r.to_lowercase().contains("recovery")));
     }
 
     #[test]

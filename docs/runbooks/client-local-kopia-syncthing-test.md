@@ -101,7 +101,7 @@ Navigate to **Setup Wizard**.
 Navigate to **Backup Plan**.
 
 **Expected:** Command plan table shows five planned commands:
-- `kopia version`
+- `kopia --version`
 - `kopia repository create filesystem --path [REDACTED]`
 - `kopia repository check`
 - `kopia snapshot create [REDACTED]`
@@ -281,7 +281,7 @@ Before calling a local test complete, confirm each of the following manually:
 | Feature | Mock/offline | Real (not yet implemented) |
 |---|---|---|
 | Kopia command planning | ✅ Real Rust logic | Real execution: not yet |
-| Kopia/Syncthing tool verification | ✅ Real SHA-256 verifier and manifest scaffold | Real bundled binaries/checksums: not yet |
+| Kopia/Syncthing tool verification | ✅ Real SHA-256 verifier and macOS arm64 manifest checksums | Other platform binaries/checksums: not yet |
 | Syncthing folder safety | ✅ Real Rust logic | Real execution: not yet |
 | Config validation | ✅ Real Rust logic | Production keychain: not yet |
 | Mock backup result | ✅ Mock JSON | Real kopia snapshot: not yet |
@@ -297,7 +297,7 @@ Before calling a local test complete, confirm each of the following manually:
 
 ## Do not claim real backup protection until:
 
-1. A real Kopia binary is bundled and its checksum is verified against the manifest.
+1. A real Kopia binary is bundled and its checksum is verified against the manifest on every release platform.
 2. `kopia repository create`, `snapshot create`, and `repository check` have been executed against a real repository.
 3. A real restore from a peer-held repository has succeeded with canary checksum match.
 4. Syncthing has replicated the encrypted repository to a second machine.

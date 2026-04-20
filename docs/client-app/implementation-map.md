@@ -101,7 +101,7 @@ Exit criteria:
 
 Goal: make tool management predictable and safe.
 
-Status: manifest modeling, resource manifest scaffolding, tool status types, and real SHA-256 verification exist. Actual Kopia/Syncthing binaries and release checksums are not bundled yet, so production readiness still fails closed until release tooling supplies verified artifacts.
+Status: manifest modeling, resource manifest scaffolding, tool status types, and real SHA-256 verification exist. macOS arm64 Kopia and Syncthing binaries are bundled with manifest checksums. Other platforms still fail closed until release tooling supplies verified artifacts, and live tool execution is not yet wired into user actions.
 
 Deliverables:
 

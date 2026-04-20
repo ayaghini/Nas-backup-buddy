@@ -5,71 +5,71 @@
       "name": "Kopia",
       "version": "0.17.0",
       "platform": "Aarch64MacOs",
-      "sha256": "",
-      "binary_path": "binaries/kopia-aarch64-apple-darwin"
+      "sha256": "d5f7d864b2fd35eecf35cf73374aeed84f9b30fc580b5931b68b30bb80e88acd",
+      "binary_path": "resources/binaries/kopia-aarch64-apple-darwin"
     },
     {
       "name": "Syncthing",
       "version": "1.27.7",
       "platform": "Aarch64MacOs",
-      "sha256": "",
-      "binary_path": "binaries/syncthing-aarch64-apple-darwin"
+      "sha256": "a914d368a621d3a9972ae6b995174169b2bc8ab0041d870da49502e618209e39",
+      "binary_path": "resources/binaries/syncthing-aarch64-apple-darwin"
     },
     {
       "name": "Kopia",
       "version": "0.17.0",
       "platform": "X86_64MacOs",
       "sha256": "",
-      "binary_path": "binaries/kopia-x86_64-apple-darwin"
+      "binary_path": "resources/binaries/kopia-x86_64-apple-darwin"
     },
     {
       "name": "Syncthing",
       "version": "1.27.7",
       "platform": "X86_64MacOs",
       "sha256": "",
-      "binary_path": "binaries/syncthing-x86_64-apple-darwin"
+      "binary_path": "resources/binaries/syncthing-x86_64-apple-darwin"
     },
     {
       "name": "Kopia",
       "version": "0.17.0",
       "platform": "X86_64Linux",
       "sha256": "",
-      "binary_path": "binaries/kopia-x86_64-unknown-linux-gnu"
+      "binary_path": "resources/binaries/kopia-x86_64-unknown-linux-gnu"
     },
     {
       "name": "Syncthing",
       "version": "1.27.7",
       "platform": "X86_64Linux",
       "sha256": "",
-      "binary_path": "binaries/syncthing-x86_64-unknown-linux-gnu"
+      "binary_path": "resources/binaries/syncthing-x86_64-unknown-linux-gnu"
     },
     {
       "name": "Kopia",
       "version": "0.17.0",
       "platform": "Aarch64Linux",
       "sha256": "",
-      "binary_path": "binaries/kopia-aarch64-unknown-linux-gnu"
+      "binary_path": "resources/binaries/kopia-aarch64-unknown-linux-gnu"
     },
     {
       "name": "Syncthing",
       "version": "1.27.7",
       "platform": "Aarch64Linux",
       "sha256": "",
-      "binary_path": "binaries/syncthing-aarch64-unknown-linux-gnu"
+      "binary_path": "resources/binaries/syncthing-aarch64-unknown-linux-gnu"
     },
     {
       "name": "Kopia",
       "version": "0.17.0",
       "platform": "X86_64Windows",
       "sha256": "",
-      "binary_path": "binaries/kopia-x86_64-pc-windows-msvc.exe"
+      "binary_path": "resources/binaries/kopia-x86_64-pc-windows-msvc.exe"
     },
     {
       "name": "Syncthing",
       "version": "1.27.7",
       "platform": "X86_64Windows",
       "sha256": "",
-      "binary_path": "binaries/syncthing-x86_64-pc-windows-msvc.exe"
+      "binary_path": "resources/binaries/syncthing-x86_64-pc-windows-msvc.exe"
     }
   ]
 }

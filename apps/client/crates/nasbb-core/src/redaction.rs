@@ -74,8 +74,14 @@ pub fn redact_line(line: &str) -> String {
                     let before = &line[..pos + key.len()];
                     let sep_pos = rest.find(|c| c == '=' || c == ':').unwrap();
                     let sep = &rest[sep_pos..=sep_pos];
-                    // Find end of value (whitespace or end of string)
-                    let value_start = sep_pos + 1;
+                    // Find end of value after optional whitespace following the separator.
+                    let value_start = sep_pos
+                        + 1
+                        + rest[sep_pos + 1..]
+                            .chars()
+                            .take_while(|c| c.is_whitespace())
+                            .map(char::len_utf8)
+                            .sum::<usize>();
                     let value_end = rest[value_start..]
                         .find(char::is_whitespace)
                         .map(|i| value_start + i)
@@ -92,7 +98,8 @@ pub fn redact_line(line: &str) -> String {
     let mut result = line.to_string();
     for word in words {
         // Strip trailing punctuation for matching
-        let stripped = word.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '\\' && c != ':');
+        let stripped = word
+            .trim_end_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '\\' && c != ':');
         if looks_like_token(stripped) || looks_like_path(stripped) {
             result = result.replacen(word, REDACTED, 1);
         }
@@ -135,7 +142,10 @@ mod tests {
     fn redacts_absolute_unix_path() {
         let line = "restoring to /home/alice/documents/restored";
         let result = redact_line(line);
-        assert!(!result.contains("/home/alice/documents/restored"), "got: {result}");
+        assert!(
+            !result.contains("/home/alice/documents/restored"),
+            "got: {result}"
+        );
     }
 
     #[test]
