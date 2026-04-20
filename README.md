@@ -12,6 +12,22 @@ Current repository status:
 - The client safety model is local-first: secrets stay local, telemetry is allowlisted, and source folders must never be synced directly to peers.
 - Release foundations have started under AGPL-3.0-only, but production release readiness still requires license inventory, signing, bundled tool checksums, and Rust verification on a machine with Cargo.
 
+### Project Progress
+
+Progress is estimated by usable project capability, not by lines of code. The project is still pre-alpha.
+
+| Component | Progress | Status | What Exists | Main Remaining Work |
+| --- | ---: | --- | --- | --- |
+| Feasibility and product docs | `████████░░` 80% | Strong foundation | Feasibility study, architecture, implementation map, risk register, control plan, runbooks, ADRs | Keep docs updated as real POC results arrive |
+| Web coordination prototype | `██████░░░░` 60% | Usable local prototype | Dashboard, matching, pacts, health, restore drills, incidents, admin, shared mock state | Real backend, auth, persistence, API contracts, production UX pass |
+| Desktop client scaffold | `████░░░░░░` 40% | Scaffold started | Tauri + React UI shell, Rust core modules, config/health/redaction/safety/tool-manifest models | Real service orchestration, keychain, Kopia/Syncthing manager, Tauri command coverage |
+| Backup safety controls | `█████░░░░░` 50% | Core rules modeled | Protected gate, restore failure mapping, canary mismatch handling, folder safety validation, telemetry allowlist docs | End-to-end backup/sync/restore automation and real-world failure tests |
+| Release and open-source foundation | `███░░░░░░░` 30% | Started | AGPL-3.0-only notice, third-party notices placeholder, package scaffolds | Full AGPL text/audit, dependency license inventory, signing, checksums, release process |
+| Syncthing/Kopia integration | `██░░░░░░░░` 20% | Designed, not implemented | Tool choice and architecture documented; manifest model exists | Bundle pinned binaries, verify checksums, run Kopia/Syncthing safely from client |
+| Infrastructure and backend | `█░░░░░░░░░` 10% | Future work | Syncthing discovery/relay notes, web app mock state | API, database, auth, pairing tokens, health ingestion, relay/discovery operations |
+| Real backup POC evidence | `█░░░░░░░░░` 10% | Not yet proven in repo | POC and restore drill runbooks | Run two-machine Kopia + Syncthing trial, record results, prove restore from peer copy |
+| Production readiness | `░░░░░░░░░░` 0% | Not production-ready | Clear safety posture and launch constraints | Security review, legal review, reliability metrics, support process, paid-marketplace controls |
+
 Next engineering priorities:
 
 - Run Rust checks for the client on a machine with Cargo.
