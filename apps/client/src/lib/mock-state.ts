@@ -3,74 +3,45 @@
 
 import type { ClientSetupState, HealthReport } from './types';
 
+// Honest initial state: nothing is configured or run yet.
+// Tool status starts missing and is updated on mount by real detection.
 export const DEFAULT_SETUP_STATE: ClientSetupState = {
   role: 'data_owner',
   engine: 'kopia',
-  // Start as missing — updated on mount by real detection via get_tool_status
   kopia_tool_status: 'missing',
   syncthing_tool_status: 'missing',
   kopia_repository: {
-    status: 'check_passed',
-    snapshot_count: 3,
-    last_snapshot_at: '2026-04-19T10:00:00Z',
-    repo_size_bytes: 1_258_291_200,
+    status: 'not_configured',
+    snapshot_count: null,
+    last_snapshot_at: null,
+    repo_size_bytes: null,
   },
   syncthing_folder: {
-    state: 'in_sync',
-    peer_device_id: 'MOCK77-DEVICE-ID',
-    peer_connected: true,
-    last_sync_at: '2026-04-19T11:00:00Z',
-    bytes_pending: 0,
+    state: 'not_configured',
+    peer_device_id: null,
+    peer_connected: false,
+    last_sync_at: null,
+    bytes_pending: null,
   },
   recovery_key_confirmed: false,
   health_report_consent: false,
-  offline_mode: true,
+  offline_mode: false,
 };
 
+// Honest initial health: no backup, no sync, no drill, no peer.
+// Values update to real data after each operation via refreshRealHealth().
 export const DEFAULT_HEALTH_REPORT: HealthReport = {
-  last_backup_age_hours: 2.0,
-  last_sync_age_hours: 1.0,
-  free_quota_percent: 65.0,
+  last_backup_age_hours: 999.0,
+  last_sync_age_hours: 999.0,
+  free_quota_percent: 100.0,
   restore_drill_age_days: -1,
-  peer_offline_hours: 0.0,
-  repository_check_ok: true,
+  peer_offline_hours: 999.0,
+  repository_check_ok: false,
   repository_check_message: null,
 };
 
-export const SAMPLE_LOG_LINES: Array<{ raw: string; redacted: string }> = [
-  {
-    raw: 'kopia snapshot create /home/alice/documents',
-    redacted: 'kopia snapshot create [REDACTED]',
-  },
-  {
-    raw: '2026-04-19T10:00:01Z [INFO]  kopia snapshot started',
-    redacted: '2026-04-19T10:00:01Z [INFO]  kopia snapshot started',
-  },
-  {
-    raw: '2026-04-19T10:00:03Z [INFO]  scanning source directory: /home/alice/documents',
-    redacted: '2026-04-19T10:00:03Z [INFO]  scanning source directory: [REDACTED]',
-  },
-  {
-    raw: '2026-04-19T10:00:15Z [INFO]  uploading 42 new content blocks',
-    redacted: '2026-04-19T10:00:15Z [INFO]  uploading 42 new content blocks',
-  },
-  {
-    raw: '2026-04-19T10:00:28Z [INFO]  snapshot complete: 1.2 GB, duration=27s',
-    redacted: '2026-04-19T10:00:28Z [INFO]  snapshot complete: 1.2 GB, duration=27s',
-  },
-  {
-    raw: '2026-04-19T10:00:29Z [INFO]  connecting with password=hunter2 to repository',
-    redacted: '2026-04-19T10:00:29Z [INFO]  connecting with password=[REDACTED] to repository',
-  },
-  {
-    raw: '2026-04-19T10:01:00Z [INFO]  syncthing: repository folder in sync',
-    redacted: '2026-04-19T10:01:00Z [INFO]  syncthing: repository folder in sync',
-  },
-  {
-    raw: '2026-04-19T10:01:01Z [INFO]  health report emitted: last_backup_age_hours=0.0 free_quota_percent=65.0',
-    redacted: '2026-04-19T10:01:01Z [INFO]  health report emitted: last_backup_age_hours=0.0 free_quota_percent=65.0',
-  },
-];
+// Start with no log lines — real lines accumulate as operations run.
+export const SAMPLE_LOG_LINES: Array<{ raw: string; redacted: string }> = [];
 
 export function formatBytes(bytes: number | null): string {
   if (bytes === null) return '—';

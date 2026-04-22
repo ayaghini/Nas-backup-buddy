@@ -38,8 +38,8 @@ The local service must validate configuration before running backup, sync, healt
 | Free quota critical | Less than 5 percent |
 | Peer offline warning | More than 24 hours |
 | Peer offline critical | More than 7 days |
-| Repository check warning | Tool warning |
-| Repository check critical | Tool failure |
+| Repository verification warning | Tool warning |
+| Repository verification critical | Tool failure |
 | Source folder sync | Always blocked |
 | Health reporting | Off until explicit consent |
 
@@ -140,4 +140,3 @@ Never include:
 - Raw Kopia logs.
 - Raw Syncthing logs.
 - Unredacted command lines containing local paths or secrets.
-

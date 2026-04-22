@@ -10,9 +10,9 @@
     },
     {
       "name": "Syncthing",
-      "version": "1.27.7",
+      "version": "2.0.16",
       "platform": "Aarch64MacOs",
-      "sha256": "a914d368a621d3a9972ae6b995174169b2bc8ab0041d870da49502e618209e39",
+      "sha256": "65cacc02cc6608b24dcac49bd656c9dcf670842d4ab00794bde5fe9dbd8cb36a",
       "binary_path": "resources/binaries/syncthing-aarch64-apple-darwin"
     },
     {

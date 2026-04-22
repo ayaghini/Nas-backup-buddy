@@ -4,7 +4,9 @@ import {
   Activity,
   Archive,
   BookOpen,
+  FlaskConical,
   HardDrive,
+  KeyRound,
   RotateCcw,
   Settings,
   Shield,
@@ -22,17 +24,21 @@ import { HealthChecks }        from './views/HealthChecks';
 import { Logs }                from './views/Logs';
 import { SettingsView }        from './views/Settings';
 import { About }               from './views/About';
+import { TestLab }             from './views/TestLab';
+import { RecoveryKey }         from './views/RecoveryKey';
 
 const NAV = [
-  { to: '/',          icon: <Activity size={16} />,    label: 'Dashboard'     },
-  { to: '/setup',     icon: <Wand2 size={16} />,       label: 'Setup Wizard'  },
-  { to: '/backup',    icon: <HardDrive size={16} />,   label: 'Backup Plan'   },
-  { to: '/syncthing', icon: <Wifi size={16} />,        label: 'Syncthing'     },
-  { to: '/drills',    icon: <RotateCcw size={16} />,   label: 'Restore Drill' },
-  { to: '/health',    icon: <Shield size={16} />,      label: 'Health Checks' },
-  { to: '/logs',      icon: <Terminal size={16} />,    label: 'Logs'          },
-  { to: '/settings',  icon: <Settings size={16} />,    label: 'Settings'      },
-  { to: '/about',     icon: <BookOpen size={16} />,    label: 'About'         },
+  { to: '/',          icon: <Activity size={16} />,       label: 'Dashboard'     },
+  { to: '/setup',     icon: <Wand2 size={16} />,          label: 'Setup Wizard'  },
+  { to: '/backup',    icon: <HardDrive size={16} />,      label: 'Backup Plan'   },
+  { to: '/syncthing', icon: <Wifi size={16} />,           label: 'Syncthing'     },
+  { to: '/drills',    icon: <RotateCcw size={16} />,      label: 'Restore Drill' },
+  { to: '/health',    icon: <Shield size={16} />,         label: 'Health Checks' },
+  { to: '/recovery',  icon: <KeyRound size={16} />,       label: 'Recovery Key'  },
+  { to: '/test-lab',  icon: <FlaskConical size={16} />,   label: 'Test Lab'      },
+  { to: '/logs',      icon: <Terminal size={16} />,       label: 'Logs'          },
+  { to: '/settings',  icon: <Settings size={16} />,       label: 'Settings'      },
+  { to: '/about',     icon: <BookOpen size={16} />,       label: 'About'         },
 ];
 
 export function App() {
@@ -85,6 +91,8 @@ export function App() {
             <Route path="/syncthing" element={<SyncthingConnection />} />
             <Route path="/drills"    element={<RestoreDrill />} />
             <Route path="/health"    element={<HealthChecks />} />
+            <Route path="/recovery"  element={<RecoveryKey />} />
+            <Route path="/test-lab"  element={<TestLab />} />
             <Route path="/logs"      element={<Logs />} />
             <Route path="/settings"  element={<SettingsView />} />
             <Route path="/about"     element={<About />} />

@@ -1,44 +1,36 @@
 import { useState } from 'react';
 import { AlertTriangle, CheckCircle, Info, RotateCcw, XCircle } from 'lucide-react';
-import type { MockDrillResult } from '../lib/types';
-import { runMockRestoreDrill } from '../lib/tauri-bridge';
+import type { RealDrillResult } from '../lib/types';
+import { runRestoreDrill } from '../lib/tauri-bridge';
 import { useApp } from '../context/AppContext';
 
-const CANARY_EXAMPLE = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
-
 export function RestoreDrill() {
-  const { addLogLine, updateHealthFromDrillResult } = useApp();
-  const [expectedChecksum, setExpectedChecksum] = useState(CANARY_EXAMPLE);
-  const [observedChecksum, setObservedChecksum] = useState('');
-  const [result, setResult] = useState<MockDrillResult | null>(null);
+  const {
+    addLogLine,
+    updateHealthFromDrillResult,
+    realLab,
+    updateRealLab,
+    refreshRealHealth,
+  } = useApp();
+  const [result, setResult] = useState<RealDrillResult | null>(realLab.drill);
   const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleRunDrill() {
-    if (!expectedChecksum) return;
+    setError(null);
     setRunning(true);
     try {
-      const r = await runMockRestoreDrill(expectedChecksum, observedChecksum);
+      const r = await runRestoreDrill();
       setResult(r);
-      const observedForLog = observedChecksum || '[empty]';
-      addLogLine(`restore_drill expected=${expectedChecksum} observed=${observedForLog}`, r.log_line);
-      // Update shared health state so HealthChecks and Dashboard reflect result
+      updateRealLab({ drill: r });
+      addLogLine('kopia restore [snapshot] [restore-dir]', r.log_line);
       updateHealthFromDrillResult(r);
+      await refreshRealHealth();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setRunning(false);
     }
-  }
-
-  function simulatePassing() {
-    setObservedChecksum(expectedChecksum);
-  }
-
-  function simulateMismatch() {
-    setObservedChecksum('sha256:0000000000000000000000000000000000000000000000000000000000000000');
-  }
-
-  function simulateFailure() {
-    setExpectedChecksum('sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
-    setObservedChecksum('');
   }
 
   return (
@@ -82,44 +74,29 @@ export function RestoreDrill() {
 
       {/* Interactive drill */}
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-4">
-        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Mock Drill Inputs</h3>
-
-        <div className="flex gap-2 flex-wrap">
-          <button onClick={simulatePassing} className="px-2.5 py-1 text-xs bg-emerald-900/30 border border-emerald-700/30 text-emerald-300 rounded hover:bg-emerald-900/50 transition-colors">Simulate pass</button>
-          <button onClick={simulateMismatch} className="px-2.5 py-1 text-xs bg-red-900/30 border border-red-700/30 text-red-300 rounded hover:bg-red-900/50 transition-colors">Simulate mismatch</button>
-          <button onClick={simulateFailure} className="px-2.5 py-1 text-xs bg-slate-800 border border-slate-700 text-slate-400 rounded hover:bg-slate-700 transition-colors">Simulate failure (empty observed)</button>
-        </div>
-
-        <div>
-          <label className="text-xs text-slate-400 mb-1 block">Expected canary checksum</label>
-          <input
-            type="text"
-            value={expectedChecksum}
-            onChange={e => setExpectedChecksum(e.target.value)}
-            className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
-          />
-          <p className="text-xs text-slate-600 mt-1">Recorded when the snapshot was created.</p>
-        </div>
-
-        <div>
-          <label className="text-xs text-slate-400 mb-1 block">Observed canary checksum</label>
-          <input
-            type="text"
-            value={observedChecksum}
-            onChange={e => setObservedChecksum(e.target.value)}
-            placeholder="Computed from the restored canary file"
-            className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
-          />
-          <p className="text-xs text-slate-600 mt-1">SHA-256 of the canary file after restore.</p>
-        </div>
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Generated-Data Restore Drill</h3>
+        <p className="text-xs text-slate-500">
+          Restores the latest generated-data Kopia snapshot from the test lab and verifies the canary checksum automatically.
+        </p>
 
         <button
           onClick={handleRunDrill}
-          disabled={running || !expectedChecksum}
+          disabled={running || !realLab.backup}
           className="w-full py-2 bg-sky-700 hover:bg-sky-600 disabled:opacity-50 text-white text-sm rounded transition-colors"
         >
-          {running ? 'Running drill…' : 'Run mock restore drill'}
+          {running ? 'Running drill…' : 'Run real restore drill'}
         </button>
+
+        {!realLab.backup && (
+          <p className="text-xs text-amber-300/80">Run a generated-data backup first in Backup Plan or Integration Test Lab.</p>
+        )}
+
+        {error && (
+          <div className="flex items-start gap-2.5 p-3 rounded-lg border border-red-500/20 bg-red-500/5">
+            <XCircle size={13} className="text-red-400 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-red-300">{error}</p>
+          </div>
+        )}
       </div>
 
       {/* Result */}
@@ -160,6 +137,16 @@ export function RestoreDrill() {
           )}
 
           <div className="space-y-1">
+            {result.canary_verify && (
+              <>
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Canary Check</div>
+                <div className="text-xs text-slate-400 font-mono">expected: {result.canary_verify.expected_sha256.slice(0, 16)}...</div>
+                <div className="text-xs text-slate-400 font-mono">observed: {result.canary_verify.observed_sha256.slice(0, 16)}...</div>
+                <div className={`text-xs ${result.canary_verify.matches ? 'text-emerald-300' : 'text-red-300'}`}>
+                  checksum match: {result.canary_verify.matches ? 'yes' : 'no'}
+                </div>
+              </>
+            )}
             <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Audit Evidence</div>
             {result.audit_evidence.map((e, i) => (
               <div key={i} className="text-xs text-slate-400 font-mono">{e}</div>

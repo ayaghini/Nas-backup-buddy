@@ -41,7 +41,7 @@ Responsibilities:
 - Own secret access through OS keychain where practical.
 - Execute Kopia and Syncthing.
 - Validate source, repository, and hosted storage folder separation.
-- Run backup, repository check, sync check, and restore drill tasks.
+- Run backup, repository verification, sync check, and restore drill tasks.
 - Produce redacted logs.
 - Produce allowlisted health reports.
 
@@ -185,4 +185,3 @@ The client can display `Protected` only when all gates pass:
 - Retention policy configured.
 - Peer quota has buffer.
 - No critical health alerts.
-

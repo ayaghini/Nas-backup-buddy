@@ -186,7 +186,7 @@ Agent responsibilities:
 - Validate retention policy exists.
 - Validate free space and quota.
 - Run backup command.
-- Run repository check command.
+- Run repository verification command with `kopia snapshot verify`.
 - Run canary restore.
 - Redact logs.
 - Emit health status.
@@ -209,7 +209,7 @@ Agent health checks:
 | Free quota | Less than 15 percent | Less than 5 percent |
 | Restore drill | Older than 30 days | Failed or never run |
 | Peer online | Offline more than 24 hours | Offline more than 7 days |
-| Repository check | Warning from tool | Failed check |
+| Repository verification | Warning from tool | Failed verification |
 
 Exit criteria:
 
@@ -406,4 +406,3 @@ Before public launch:
 8. Prototype local agent checks.
 9. Build minimal health dashboard.
 10. Test peer replacement.
-

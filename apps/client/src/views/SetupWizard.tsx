@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import {
-  AlertTriangle, CheckCircle, ChevronLeft, ChevronRight, HardDrive,
-  Info, Lock, Shield, Sliders, Users, Wand2,
+  AlertTriangle, CheckCircle, ChevronLeft, ChevronRight,
+  FolderOpen, HardDrive, Info, Lock, Shield, Sliders, Users, Wand2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import type { SetupDraftConfig, UserRole } from '../lib/types';
-import { validateSetupConfig } from '../lib/tauri-bridge';
+import { pickDirectory, validateSetupConfig } from '../lib/tauri-bridge';
 
-type Step = 'role' | 'source-folders' | 'repository' | 'hosted-storage' | 'recovery-key' | 'retention' | 'health-consent' | 'summary';
+type Step = 'role' | 'source-folders' | 'repository' | 'hosted-storage' | 'retention' | 'health-consent' | 'summary';
 
-const STEPS: Step[] = ['role', 'source-folders', 'repository', 'hosted-storage', 'recovery-key', 'retention', 'health-consent', 'summary'];
+const STEPS: Step[] = ['role', 'source-folders', 'repository', 'hosted-storage', 'retention', 'health-consent', 'summary'];
 
 function stepLabel(s: Step): string {
   switch (s) {
@@ -17,7 +17,6 @@ function stepLabel(s: Step): string {
     case 'source-folders': return 'Source folders';
     case 'repository': return 'Repository location';
     case 'hosted-storage': return 'Hosted storage';
-    case 'recovery-key': return 'Save recovery key';
     case 'retention': return 'Retention policy';
     case 'health-consent': return 'Health reporting';
     case 'summary': return 'Summary';
@@ -32,6 +31,7 @@ function isOwnerRole(role: UserRole): boolean {
 }
 
 const INITIAL_DRAFT: SetupDraftConfig = {
+  label: '',
   role: 'data_owner',
   source_folders: [],
   repository_path: '',
@@ -71,13 +71,14 @@ function safetyCheck(draft: SetupDraftConfig): string[] {
 }
 
 export function SetupWizard() {
-  const { applyWizardConfig, setRecoveryKeyConfirmed, setHealthReportConsent } = useApp();
+  const { applyWizardConfig, setHealthReportConsent } = useApp();
   const [stepIdx, setStepIdx] = useState(0);
   const [draft, setDraft] = useState<SetupDraftConfig>(INITIAL_DRAFT);
   const [newFolder, setNewFolder] = useState('');
   const [completed, setCompleted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+
 
   const step = STEPS[stepIdx];
   const isFirst = stepIdx === 0;
@@ -125,9 +126,8 @@ export function SetupWizard() {
       return;
     }
 
-    // 3. All validation passed — persist to shared state
+    // 3. All validation passed — persist to shared state.
     applyWizardConfig(draft);
-    setRecoveryKeyConfirmed(isOwnerRole(draft.role));
     setHealthReportConsent(draft.health_report_consent);
     setSaving(false);
     setCompleted(true);
@@ -154,9 +154,6 @@ export function SetupWizard() {
         if (!d.hosted_storage_path) return ['Enter the hosted peer-storage path.'];
         if (d.hosted_quota_gb <= 0) return ['Enter a quota greater than 0 GB.'];
         return [];
-      case 'recovery-key':
-        if (!isOwnerRole(d.role)) return [];
-        return [];
       case 'retention':
         return d.retention_keep_last < 1 ? ['Keep-last must be at least 1.'] : [];
       default: return [];
@@ -172,13 +169,14 @@ export function SetupWizard() {
         </div>
         <div className="flex items-start gap-2.5 p-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5">
           <CheckCircle size={16} className="text-emerald-400 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm text-emerald-300 font-medium">Setup configuration saved.</p>
-            <p className="text-xs text-emerald-300/70 mt-1">
-              Client-side and backend validation passed. Next step: run a test backup, then a restore drill.
+          <div className="space-y-1.5">
+            <p className="text-sm text-emerald-300 font-medium">Repository configuration saved.</p>
+            <p className="text-xs text-emerald-300/70">
+              If your master encryption password is already set, Kopia will initialise the repository and run the first backup automatically.
+              If not, go to <strong>Recovery Key</strong> to set it — a backup will start as soon as it's saved.
             </p>
             {draft.health_report_consent && (
-              <p className="text-xs text-sky-300/70 mt-1">
+              <p className="text-xs text-sky-300/70">
                 Health reporting enabled — allowlisted metadata will be sent to the web app when connected.
               </p>
             )}
@@ -188,7 +186,7 @@ export function SetupWizard() {
           onClick={() => { setCompleted(false); setStepIdx(0); setDraft(INITIAL_DRAFT); setValidationErrors([]); }}
           className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
         >
-          Start over
+          Add another repository
         </button>
       </div>
     );
@@ -239,7 +237,9 @@ export function SetupWizard() {
         {step === 'repository' && (
           <RepositoryStep
             role={draft.role}
+            label={draft.label}
             value={draft.repository_path}
+            onLabelChange={v => setDraft(d => ({ ...d, label: v }))}
             onChange={v => setDraft(d => ({ ...d, repository_path: v }))}
           />
         )}
@@ -251,9 +251,6 @@ export function SetupWizard() {
             onPathChange={v => setDraft(d => ({ ...d, hosted_storage_path: v }))}
             onQuotaChange={v => setDraft(d => ({ ...d, hosted_quota_gb: v }))}
           />
-        )}
-        {step === 'recovery-key' && (
-          <RecoveryKeyStep role={draft.role} />
         )}
         {step === 'retention' && (
           <RetentionStep
@@ -353,6 +350,26 @@ function SourceFoldersStep({ role, folders, newFolder, setNewFolder, onAdd, onRe
   role: UserRole; folders: string[]; newFolder: string;
   setNewFolder: (v: string) => void; onAdd: () => void; onRemove: (f: string) => void;
 }) {
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  const [browsing, setBrowsing] = useState(false);
+
+  async function handleBrowse() {
+    setBrowseError(null);
+    setBrowsing(true);
+    try {
+      const folder = await pickDirectory();
+      if (folder) {
+        setNewFolder(folder);
+      } else {
+        setBrowseError('Folder picker is available in the desktop app. You can still paste a path manually.');
+      }
+    } catch (e: unknown) {
+      setBrowseError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBrowsing(false);
+    }
+  }
+
   if (!isOwnerRole(role)) {
     return (
       <div className="flex items-start gap-2.5 p-3 rounded-lg border border-sky-500/20 bg-sky-500/5">
@@ -380,12 +397,25 @@ function SourceFoldersStep({ role, folders, newFolder, setNewFolder, onAdd, onRe
           className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
         />
         <button
+          type="button"
+          onClick={handleBrowse}
+          disabled={browsing}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm text-slate-200 rounded transition-colors"
+          title="Choose a source folder"
+        >
+          <FolderOpen size={14} />
+          {browsing ? 'Opening' : 'Browse'}
+        </button>
+        <button
           onClick={onAdd}
           className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-sm text-slate-200 rounded transition-colors"
         >
           Add
         </button>
       </div>
+      {browseError && (
+        <p className="text-xs text-amber-300/80">{browseError}</p>
+      )}
       {folders.length > 0 && (
         <div className="space-y-1">
           {folders.map(f => (
@@ -400,7 +430,33 @@ function SourceFoldersStep({ role, folders, newFolder, setNewFolder, onAdd, onRe
   );
 }
 
-function RepositoryStep({ role, value, onChange }: { role: UserRole; value: string; onChange: (v: string) => void }) {
+function RepositoryStep({ role, label, value, onLabelChange, onChange }: {
+  role: UserRole;
+  label: string;
+  value: string;
+  onLabelChange: (v: string) => void;
+  onChange: (v: string) => void;
+}) {
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  const [browsing, setBrowsing] = useState(false);
+
+  async function handleBrowse() {
+    setBrowseError(null);
+    setBrowsing(true);
+    try {
+      const folder = await pickDirectory();
+      if (folder) {
+        onChange(folder);
+      } else {
+        setBrowseError('Folder picker is available in the desktop app. You can still paste a path manually.');
+      }
+    } catch (e: unknown) {
+      setBrowseError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBrowsing(false);
+    }
+  }
+
   if (!isOwnerRole(role)) {
     return (
       <div className="flex items-start gap-2.5 p-3 rounded-lg border border-sky-500/20 bg-sky-500/5">
@@ -411,22 +467,49 @@ function RepositoryStep({ role, value, onChange }: { role: UserRole; value: stri
   }
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-medium text-slate-200">Encrypted repository path</h3>
+      <h3 className="text-sm font-medium text-slate-200">Encrypted repository</h3>
       <p className="text-xs text-slate-400 leading-relaxed">
-        Kopia will write encrypted snapshots to this directory. This path will be synced to your peer via Syncthing —
-        not your source folders.
+        Give this backup job a name, then choose where Kopia will write encrypted snapshots.
+        This path — not your source folders — is what gets synced to your peer via Syncthing.
       </p>
+
+      <div>
+        <label className="text-xs text-slate-400 mb-1 block">Backup job name</label>
+        <input
+          type="text"
+          value={label}
+          onChange={e => onLabelChange(e.target.value)}
+          placeholder="e.g. Home documents, Photos, Work projects"
+          className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+        />
+        <p className="text-xs text-slate-600 mt-1">Used as the display name in Backup Plan and Syncthing setup.</p>
+      </div>
       <div className="flex items-center gap-2.5 p-2.5 rounded border border-amber-500/20 bg-amber-500/5">
         <AlertTriangle size={13} className="text-amber-400 flex-shrink-0" />
         <p className="text-xs text-amber-300/80">Must not be inside a source folder, and source folders must not be inside it.</p>
       </div>
-      <input
-        type="text"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder="/home/user/.nasbb-repo"
-        className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
-      />
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder="/home/user/.nasbb-repo"
+          className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+        />
+        <button
+          type="button"
+          onClick={handleBrowse}
+          disabled={browsing}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm text-slate-200 rounded transition-colors"
+          title="Choose encrypted repository folder"
+        >
+          <FolderOpen size={14} />
+          {browsing ? 'Opening' : 'Browse'}
+        </button>
+      </div>
+      {browseError && (
+        <p className="text-xs text-amber-300/80">{browseError}</p>
+      )}
       <div className="flex items-start gap-2 p-2.5 rounded border border-sky-500/10 bg-sky-500/5">
         <Lock size={12} className="text-sky-400 flex-shrink-0 mt-0.5" />
         <p className="text-xs text-sky-300/70">This path will become the Syncthing shared folder. Your source folders will never be shared.</p>
@@ -474,35 +557,6 @@ function HostedStorageStep({ role, path, quota, onPathChange, onQuotaChange }: {
           className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
         />
       </div>
-    </div>
-  );
-}
-
-function RecoveryKeyStep({ role }: { role: UserRole }) {
-  if (!isOwnerRole(role)) {
-    return (
-      <div className="flex items-start gap-2.5 p-3 rounded-lg border border-sky-500/20 bg-sky-500/5">
-        <Info size={13} className="text-sky-400 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-sky-300/80">Recovery key confirmation is not required for the Storage Host role. Skip this step.</p>
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-3">
-      <h3 className="text-sm font-medium text-slate-200">Save your recovery key</h3>
-      <div className="flex items-start gap-2.5 p-3 rounded-lg border border-amber-500/20 bg-amber-500/5">
-        <AlertTriangle size={13} className="text-amber-400 flex-shrink-0 mt-0.5" />
-        <div className="text-xs text-amber-300/80 leading-relaxed space-y-1">
-          <p><strong>Your backup password or recovery key is never stored by this application.</strong></p>
-          <p>If you lose it, your backup data cannot be recovered. Store it in a password manager or printed copy in a safe location — outside this device.</p>
-        </div>
-      </div>
-      <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
-        <div className="flex items-start gap-2"><CheckCircle size={13} className="text-emerald-400 flex-shrink-0 mt-0.5" /><span>Password is stored only in the OS keychain — never in the config file.</span></div>
-        <div className="flex items-start gap-2"><CheckCircle size={13} className="text-emerald-400 flex-shrink-0 mt-0.5" /><span>Never sent to the web API or any external service.</span></div>
-        <div className="flex items-start gap-2"><CheckCircle size={13} className="text-emerald-400 flex-shrink-0 mt-0.5" /><span>Required for every restore — including restore drills.</span></div>
-      </div>
-      <p className="text-xs text-slate-500">Click Continue once you have saved your recovery key/password outside this device.</p>
     </div>
   );
 }

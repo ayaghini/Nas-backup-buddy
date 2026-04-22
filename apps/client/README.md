@@ -64,7 +64,7 @@ The client currently includes:
 - Real SHA-256 verification logic for bundled tool checks.
 - A bundled-tool manifest in `src-tauri/resources/tool-manifest.json`; macOS arm64 Kopia and Syncthing entries point at packaged `resources/binaries/*` paths and are filled with real checksums, while other platforms intentionally fail closed until release tooling supplies real binaries.
 - Pinned macOS arm64 Kopia and Syncthing binaries under `src-tauri/resources/binaries/`.
-- Mock/offline backup, repository check, and restore drill flows that update health and Protected-gate state.
+- Mock/offline backup, repository verification, and restore drill flows that update health and Protected-gate state.
 
 ## Current Progress
 

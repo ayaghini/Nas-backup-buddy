@@ -1,4 +1,5 @@
-import { CheckCircle, Lock, Settings, Sliders } from 'lucide-react';
+import { CheckCircle, ChevronRight, KeyRound, Lock, Settings, ShieldAlert, ShieldCheck, Sliders } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 
 function Toggle({ enabled, onToggle, label, description }: {
@@ -21,7 +22,8 @@ function Toggle({ enabled, onToggle, label, description }: {
 }
 
 export function SettingsView() {
-  const { offlineMode, healthReportConsent, recoveryKeyConfirmed, setOfflineMode, setHealthReportConsent, setRecoveryKeyConfirmed } = useApp();
+  const navigate = useNavigate();
+  const { offlineMode, healthReportConsent, recoveryKeyConfirmed, setOfflineMode, setHealthReportConsent } = useApp();
 
   return (
     <div className="p-6 space-y-6 max-w-xl">
@@ -45,12 +47,41 @@ export function SettingsView() {
           label="Health reporting to web app"
           description="Send allowlisted operational metadata to the web coordination service. Off by default."
         />
-        <Toggle
-          enabled={recoveryKeyConfirmed}
-          onToggle={() => setRecoveryKeyConfirmed(!recoveryKeyConfirmed)}
-          label="Recovery key saved externally (mock)"
-          description="Confirm you have saved your backup recovery password outside this device."
-        />
+      </div>
+
+      {/* Recovery key status */}
+      <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Recovery Key &amp; Backup Password</h3>
+        <div className={`flex items-center justify-between p-3 rounded-lg border ${
+          recoveryKeyConfirmed
+            ? 'border-emerald-800/40 bg-emerald-500/5'
+            : 'border-amber-700/40 bg-amber-500/5'
+        }`}>
+          <div className="flex items-center gap-2.5">
+            {recoveryKeyConfirmed
+              ? <ShieldCheck size={15} className="text-emerald-400 flex-shrink-0" />
+              : <ShieldAlert size={15} className="text-amber-400 flex-shrink-0" />
+            }
+            <div>
+              <div className={`text-sm font-medium ${recoveryKeyConfirmed ? 'text-emerald-300' : 'text-amber-300'}`}>
+                {recoveryKeyConfirmed ? 'Confirmed — recovery key saved externally' : 'Action required — recovery key not confirmed'}
+              </div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                {recoveryKeyConfirmed
+                  ? 'Password is held in process memory for this session.'
+                  : 'Enter your password and confirm it is saved outside this device.'}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/recovery')}
+            className="flex items-center gap-0.5 text-xs text-sky-400 hover:text-sky-300 whitespace-nowrap flex-shrink-0 ml-3"
+          >
+            <KeyRound size={12} />
+            {recoveryKeyConfirmed ? 'Manage' : 'Set up'}
+            <ChevronRight size={11} />
+          </button>
+        </div>
       </div>
 
       {/* Local-only secrets policy */}
@@ -97,7 +128,7 @@ export function SettingsView() {
           { label: 'Offline mode', value: offlineMode },
           { label: 'Health reporting', value: healthReportConsent },
           { label: 'Recovery key confirmed', value: recoveryKeyConfirmed },
-        ].map(({ label, value }) => (
+        ].map(({ label, value }: { label: string; value: boolean }) => (
           <div key={label} className="flex items-center justify-between text-sm">
             <span className="text-slate-400">{label}</span>
             <span className={`flex items-center gap-1 text-xs ${value ? 'text-emerald-400' : 'text-slate-600'}`}>

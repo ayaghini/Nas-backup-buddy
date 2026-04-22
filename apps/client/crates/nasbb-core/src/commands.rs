@@ -140,13 +140,13 @@ impl KopiaPlanner {
         }
     }
 
-    /// Plan: run `kopia repository check`.
+    /// Plan: run `kopia snapshot verify`.
     pub fn check_repository(&self) -> CommandPlan {
         CommandPlan {
             executable: self.executable.clone(),
-            args: vec!["repository".to_string(), "check".to_string()],
+            args: vec!["snapshot".to_string(), "verify".to_string()],
             env_vars: vec![EnvVar::sensitive("KOPIA_PASSWORD")],
-            display_command: format!("{} repository check", self.executable),
+            display_command: format!("{} snapshot verify", self.executable),
         }
     }
 

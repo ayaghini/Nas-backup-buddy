@@ -51,7 +51,7 @@ Minimum v1 features:
   - create encrypted Kopia repository
   - configure Syncthing repository folder
   - run backup
-  - run repository check
+  - run repository verification with `kopia snapshot verify`
   - run canary restore drill
   - redact logs
   - emit health status
@@ -91,4 +91,3 @@ Verification:
 - Confirm no secrets or plaintext paths are present in sample health reports.
 - Summarize changed files, commands run, and remaining gaps.
 ```
-

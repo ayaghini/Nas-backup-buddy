@@ -18,7 +18,7 @@ const THRESHOLDS: Array<[string, string, string]> = [
   ['Free quota',        '< 15% → Warning',     '< 5% → Critical'],
   ['Restore drill age', '> 30 days → Warning', 'Never run / failed → Critical'],
   ['Peer offline',      '> 24h → Warning',     '> 7 days → Critical'],
-  ['Repository check',  'Tool warning',         'Check failed → Critical'],
+  ['Repository verification', 'Tool warning',   'Verification failed → Critical'],
 ];
 
 type Level = 'ok' | 'warning' | 'critical';
@@ -43,7 +43,7 @@ function LevelBadge({ level }: { level: Level }) {
 }
 
 export function HealthChecks() {
-  const { healthReport, setupState } = useApp();
+  const { healthReport, setupState, wizardConfig } = useApp();
   const repo = setupState.kopia_repository;
   const sync = setupState.syncthing_folder;
 
@@ -85,7 +85,7 @@ export function HealthChecks() {
     ['Free quota', quotaLevel(), `${healthReport.free_quota_percent.toFixed(1)}%`],
     ['Restore drill age', drillLevel(), healthReport.restore_drill_age_days < 0 ? 'Never run' : `${healthReport.restore_drill_age_days} days ago`],
     ['Peer offline', peerLevel(), healthReport.peer_offline_hours === 0 ? 'Online' : `${healthReport.peer_offline_hours.toFixed(1)}h`],
-    ['Repository check', repoCheckLevel(), healthReport.repository_check_ok ? 'Passed' : 'FAILED'],
+    ['Repository verification', repoCheckLevel(), healthReport.repository_check_ok ? 'Passed' : 'FAILED'],
   ];
 
   // drill_ok: passed (age=0) means just ran, age>0 means recent pass, age<0 means failed/never
@@ -93,13 +93,14 @@ export function HealthChecks() {
   const drillChecksumOk = drillPassed; // canary checksum passes if drill passed
 
   // Determine which gate checks pass
+  const retentionConfigured = wizardConfig !== null && wizardConfig.retention_keep_last >= 1;
   const gateStatus: boolean[] = [
     repo.snapshot_count !== null && repo.snapshot_count > 0,
     sync.state === 'in_sync',
     drillPassed,
     drillChecksumOk,
     setupState.recovery_key_confirmed,
-    true,  // retention always configured in mock
+    retentionConfigured,
     healthReport.free_quota_percent >= 15,
     overallLevel !== 'critical',
   ];

@@ -103,7 +103,7 @@ Navigate to **Backup Plan**.
 **Expected:** Command plan table shows five planned commands:
 - `kopia --version`
 - `kopia repository create filesystem --path [REDACTED]`
-- `kopia repository check`
+- `kopia snapshot verify`
 - `kopia snapshot create [REDACTED]`
 - `kopia snapshot list`
 
@@ -122,17 +122,17 @@ Click **Run mock backup**.
 - File count and size are shown.
 - Log line is safe to display (no raw paths).
 
-### Test: Run mock repository check (pass)
+### Test: Run mock repository verification (pass)
 
 Click **Mock check (pass)**.
 
-**Expected:** "Repository check passed" message.
+**Expected:** "Repository verification passed" message.
 
-### Test: Run mock repository check (fail)
+### Test: Run mock repository verification (fail)
 
 Click **Mock check (fail)**.
 
-**Expected:** "Repository check FAILED" message. Red failure indicator. Health level: Critical (if wired to health view).
+**Expected:** "Repository verification FAILED" message. Red failure indicator. Health level: Critical (if wired to health view).
 
 ---
 
@@ -213,7 +213,7 @@ Navigate to **Health Checks**.
 | Free quota | < 15% | < 5% |
 | Restore drill age | > 30 days | Never run / failed |
 | Peer offline | > 24h | > 7 days |
-| Repository check | Tool warning | Check failed |
+| Repository verification | Tool warning | Verification failed |
 
 **With default mock state:**
 - Last backup: OK (2h ago).
@@ -221,7 +221,7 @@ Navigate to **Health Checks**.
 - Free quota: OK (65%).
 - Restore drill: Critical (never run — blocks Protected).
 - Peer offline: OK (online).
-- Repository check: OK (passed).
+- Repository verification: OK (passed).
 
 **Expected:** Overall health level = Critical (because drill never run).
 
@@ -298,7 +298,7 @@ Before calling a local test complete, confirm each of the following manually:
 ## Do not claim real backup protection until:
 
 1. A real Kopia binary is bundled and its checksum is verified against the manifest on every release platform.
-2. `kopia repository create`, `snapshot create`, and `repository check` have been executed against a real repository.
+2. `kopia repository create`, `snapshot create`, and `snapshot verify` have been executed against a real repository.
 3. A real restore from a peer-held repository has succeeded with canary checksum match.
 4. Syncthing has replicated the encrypted repository to a second machine.
 5. Cargo checks pass on a Rust-enabled machine for the Tauri command layer and `nasbb-core` tests.

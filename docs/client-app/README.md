@@ -78,7 +78,7 @@ The client must keep owner and host responsibilities visibly separate so a user 
 - Never mark a match Protected before a restore drill succeeds.
 - Never allow a failed restore drill or canary mismatch to remain only local UI state.
 - Never treat Syncthing as the backup engine.
-- Never continue silently after a backup, sync, repository check, or restore failure.
+- Never continue silently after a backup, sync, repository verification, or restore failure.
 
 ## V1 Responsibilities
 
@@ -88,7 +88,7 @@ The client app should:
 - Validate safe folder layout.
 - Create and check encrypted Kopia repositories.
 - Configure Syncthing folder replication for encrypted repositories only.
-- Run backups and repository checks.
+- Run backups and repository verification.
 - Run checksum-based canary restore drills.
 - Redact logs before display or reporting.
 - Emit health reports using an explicit allowlist.
@@ -102,4 +102,3 @@ The client app should:
 - Inspecting user files.
 - Uploading raw logs.
 - Supporting restic as a first-class engine before Kopia is safe and smooth.
-

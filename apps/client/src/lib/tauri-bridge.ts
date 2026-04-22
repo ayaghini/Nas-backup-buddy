@@ -12,7 +12,16 @@ import type {
   MockBackupResult,
   MockCheckResult,
   MockDrillResult,
+  RealBackupResult,
+  RealCheckResult,
+  RealDrillResult,
+  RepositoryInitResult,
   SyncthingApiPlanSummary,
+  SyncthingFolderResult,
+  SyncthingRunStatus,
+  TestLabInfo,
+  ToolProbeResult,
+  TransportFolderInfo,
 } from './types';
 import { DEFAULT_SETUP_STATE, DEFAULT_HEALTH_REPORT } from './mock-state';
 
@@ -32,6 +41,22 @@ async function invoke<T>(command: string, args?: Record<string, unknown>): Promi
   }
   const { invoke: tauriInvoke } = await import('@tauri-apps/api/core');
   return tauriInvoke<T>(command, args);
+}
+
+export async function pickDirectory(): Promise<string | null> {
+  if (!isTauri()) {
+    return null;
+  }
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: 'Choose a source folder',
+  });
+  if (typeof selected === 'string') {
+    return selected;
+  }
+  return null;
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
@@ -104,7 +129,7 @@ export async function planKopiaRepository(
     return [
       { label: 'Detect version', display_command: `${exe} --version` },
       { label: 'Create repository', display_command: `${exe} repository create filesystem --path [REDACTED]` },
-      { label: 'Repository check', display_command: `${exe} repository check` },
+      { label: 'Repository verification', display_command: `${exe} snapshot verify` },
       { label: 'Create snapshot', display_command: `${exe} snapshot create [REDACTED]` },
       { label: 'List snapshots', display_command: `${exe} snapshot list` },
     ];
@@ -158,11 +183,11 @@ export async function runMockRepositoryCheck(shouldPass?: boolean): Promise<Mock
     return {
       passed: passes,
       message: passes
-        ? 'Repository check passed. All content blobs verified.'
-        : 'Repository check FAILED. Investigate immediately — do not prune snapshots.',
+        ? 'Repository verification passed. All content blobs verified.'
+        : 'Repository verification FAILED. Investigate immediately — do not prune snapshots.',
       log_line: passes
-        ? 'repository check: verified 128 content blobs — no errors found'
-        : 'repository check: ERROR — 2 content blobs missing or corrupted',
+        ? 'repository verification: verified 128 content blobs — no errors found'
+        : 'repository verification: ERROR — 2 content blobs missing or corrupted',
     };
   }
 }
@@ -216,7 +241,7 @@ export async function getSetupReadiness(state: ClientSetupState): Promise<Integr
     if (state.kopia_tool_status !== 'ready') blocking.push(`Kopia tool not ready: ${state.kopia_tool_status}`);
     if (state.syncthing_tool_status !== 'ready') blocking.push(`Syncthing tool not ready: ${state.syncthing_tool_status}`);
     if (state.kopia_repository.status === 'not_configured') blocking.push('Kopia repository not configured');
-    if (state.kopia_repository.status === 'check_failed') blocking.push('Kopia repository check failed — investigate immediately');
+    if (state.kopia_repository.status === 'check_failed') blocking.push('Kopia repository verification failed — investigate immediately');
     if (!state.recovery_key_confirmed) blocking.push('Recovery key/password backup not confirmed');
     if (state.syncthing_folder.state === 'error') blocking.push('Syncthing error — check Syncthing logs');
 
@@ -235,6 +260,176 @@ export async function getSetupReadiness(state: ClientSetupState): Promise<Integr
     }
 
     return { readiness, blocking_reasons: blocking, warning_reasons: warnings };
+  }
+}
+
+// ── Real integration commands ─────────────────────────────────────────────────
+
+// ── Real user-data backup commands ───────────────────────────────────────────
+
+/// Initialise or connect to the user's real Kopia repository.
+export async function initializeKopiaRepository(
+  repositoryPath: string,
+): Promise<RepositoryInitResult> {
+  return invoke<RepositoryInitResult>('initialize_kopia_repository', { repositoryPath });
+}
+
+/// Back up the configured source folders to the real repository.
+export async function runRealBackupFromConfig(
+  sourceFolders: string[],
+  repositoryPath: string,
+): Promise<RealBackupResult> {
+  return invoke<RealBackupResult>('run_real_backup_from_config', { sourceFolders, repositoryPath });
+}
+
+/// Run `kopia snapshot verify` against the real repository.
+export async function runRealRepositoryCheck(
+  repositoryPath: string,
+): Promise<RealCheckResult> {
+  return invoke<RealCheckResult>('run_real_repository_check', { repositoryPath });
+}
+
+/// Add the encrypted repository folder to the running Syncthing daemon.
+export async function addSyncthingFolder(
+  repositoryPath: string,
+  sourceFolders: string[],
+): Promise<SyncthingFolderResult> {
+  return invoke<SyncthingFolderResult>('add_syncthing_folder', { repositoryPath, sourceFolders });
+}
+
+export async function probeTools(): Promise<ToolProbeResult[]> {
+  try {
+    return await invoke<ToolProbeResult[]>('probe_tools');
+  } catch {
+    // Fail-closed: report missing in browser/mock mode
+    return [
+      {
+        name: 'Kopia',
+        location: 'not_found',
+        version: null,
+        status: 'missing',
+        error_message: 'Not available in browser mode',
+      },
+      {
+        name: 'Syncthing',
+        location: 'not_found',
+        version: null,
+        status: 'missing',
+        error_message: 'Not available in browser mode',
+      },
+    ];
+  }
+}
+
+export async function createTestLab(): Promise<TestLabInfo> {
+  return await invoke<TestLabInfo>('create_test_lab');
+}
+
+export async function runTestBackup(): Promise<RealBackupResult> {
+  return await invoke<RealBackupResult>('run_test_backup');
+}
+
+export async function runRepositoryCheck(): Promise<RealCheckResult> {
+  return await invoke<RealCheckResult>('run_repository_check');
+}
+
+export async function runRestoreDrill(): Promise<RealDrillResult> {
+  return await invoke<RealDrillResult>('run_restore_drill');
+}
+
+export async function prepareSyncthingTransport(): Promise<TransportFolderInfo> {
+  return await invoke<TransportFolderInfo>('prepare_syncthing_transport');
+}
+
+/// Store the master encryption password in process memory AND the OS keychain.
+/// macOS: Keychain | Windows: Credential Manager | Linux: Secret Service
+/// Write-only: the password is never returned to the frontend.
+export async function setKopiaPassword(password: string): Promise<void> {
+  return invoke<void>('set_kopia_password', { password });
+}
+
+/// Returns true if a master password has been set in process memory this session.
+export async function hasKopiaPassword(): Promise<boolean> {
+  try {
+    return await invoke<boolean>('has_kopia_password');
+  } catch {
+    return false;
+  }
+}
+
+/// Check whether a master password is stored in the OS keychain from a previous session.
+export async function hasPasswordInKeychain(): Promise<boolean> {
+  try {
+    return await invoke<boolean>('has_password_in_keychain');
+  } catch {
+    return false;
+  }
+}
+
+/// Load the master password from the OS keychain into process memory.
+/// Returns true if a password was found and loaded. The password itself is never returned.
+export async function loadMasterPasswordFromKeychain(): Promise<boolean> {
+  try {
+    return await invoke<boolean>('load_master_password_from_keychain');
+  } catch {
+    return false;
+  }
+}
+
+/// Verify the given password against the one currently held in process memory.
+/// Used to gate "change password" flows — the user must know the current password.
+export async function verifyCurrentPassword(password: string): Promise<boolean> {
+  try {
+    return await invoke<boolean>('verify_current_password', { password });
+  } catch {
+    return false;
+  }
+}
+
+/// Remove the master password from both process memory and the OS keychain.
+/// Call this only on explicit user request (e.g., uninstall or revoke credential).
+export async function clearMasterPassword(): Promise<void> {
+  try {
+    await invoke<void>('clear_master_password');
+  } catch { /* no-op */ }
+}
+
+/// Ensure the bundled Syncthing daemon is running.
+/// If not already running, starts it from the bundled binary and waits up to 5s.
+/// Returns the final SyncthingRunStatus after startup.
+export async function ensureSyncthingRunning(): Promise<SyncthingRunStatus> {
+  return invoke<SyncthingRunStatus>('ensure_syncthing_running');
+}
+
+/// Kill the Syncthing process that was started by this app session.
+export async function stopSyncthing(): Promise<void> {
+  try {
+    await invoke<void>('stop_syncthing');
+  } catch { /* no-op */ }
+}
+
+/// Probe Syncthing: binary present/version + TCP running check on port 8384.
+/// Fast read-only check — does not start Syncthing.
+export async function checkSyncthingRunning(): Promise<SyncthingRunStatus> {
+  try {
+    return await invoke<SyncthingRunStatus>('check_syncthing_running');
+  } catch {
+    return {
+      binary_present: false,
+      binary_version: null,
+      is_running: false,
+      api_port: 8384,
+      web_ui_url: 'http://127.0.0.1:8384',
+      setup_guidance: 'Not available in browser mode.',
+    };
+  }
+}
+
+export async function getRealHealthReport(): Promise<HealthReport> {
+  try {
+    return await invoke<HealthReport>('get_health_report');
+  } catch {
+    return DEFAULT_HEALTH_REPORT;
   }
 }
 

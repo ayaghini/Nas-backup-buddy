@@ -88,8 +88,137 @@ export interface HealthReport {
   repository_check_message: string | null;
 }
 
-// Partial config for the setup wizard — values are filled in progressively.
+// ── Real integration types ────────────────────────────────────────────────────
+
+export type ToolLocation = 'bundled' | 'system_path' | 'configured' | 'not_found';
+
+export interface ToolVersion {
+  raw: string;
+  major: number;
+  minor: number;
+  patch: number;
+}
+
+export interface ToolProbeResult {
+  name: 'Kopia' | 'Syncthing';
+  location: ToolLocation;
+  version: ToolVersion | null;
+  status: ToolStatus;
+  error_message: string | null;
+}
+
+export interface TestLabInfo {
+  root_label: string;
+  is_fresh: boolean;
+  canary_sha256: string;
+  sample_file_count: number;
+}
+
+export interface CanaryVerifyResult {
+  expected_sha256: string;
+  observed_sha256: string;
+  matches: boolean;
+}
+
+export interface RealBackupResult {
+  success: boolean;
+  snapshot_id: string;
+  source_label: string;
+  timestamp: string;
+  log_line: string;
+}
+
+export interface RealCheckResult {
+  passed: boolean;
+  message: string;
+  duration_ms: number;
+  log_line: string;
+}
+
+export interface RealDrillResult {
+  result: 'pass' | 'canary_mismatch' | 'fail';
+  health_level: HealthLevel;
+  canary_verify: CanaryVerifyResult | null;
+  restore_duration_ms: number;
+  log_line: string;
+  audit_evidence: string[];
+}
+
+export interface RepositoryInitResult {
+  initialized: boolean;
+  already_existed: boolean;
+  message: string;
+}
+
+export interface SyncthingFolderResult {
+  added: boolean;
+  folder_id: string;
+  web_ui_url: string;
+  note: string;
+}
+
+export interface SyncthingRunStatus {
+  binary_present: boolean;
+  binary_version: string | null;
+  is_running: boolean;
+  api_port: number;
+  web_ui_url: string;
+  setup_guidance: string;
+}
+
+export interface TransportFolderInfo {
+  folder_id: string;
+  folder_type: string;
+  is_safety_validated: boolean;
+  config_snippet: string;
+  note: string;
+}
+
+// ── Per-repo backup job status ────────────────────────────────────────────────
+
+export type JobState = 'idle' | 'running' | 'done' | 'error';
+
+export interface RepoJobStatus {
+  init_state: JobState;
+  backup_state: JobState;
+  last_snapshot_at: string | null;
+  snapshot_count: number;
+  error: string | null;
+}
+
+// ── Syncthing peer setup types ────────────────────────────────────────────────
+
+export interface SyncPeer {
+  id: string;
+  name: string;
+  device_id: string;
+}
+
+export interface SyncFolderConfig {
+  /** Stable ID passed to Syncthing as the folder ID */
+  folder_id: string;
+  label: string;
+  path: string;
+  /** 'kopia' = managed by Kopia (encrypted repo); 'manual' = raw path added by user */
+  source: 'kopia' | 'manual';
+  selected: boolean;
+}
+
+/** How this app shares a folder with a specific peer. */
+export type PeerSyncMode = 'off' | 'sync' | 'encrypted';
+
+export interface FolderPeerAssignment {
+  folder_id: string;
+  peer_id: string;
+  mode: PeerSyncMode;
+  /** Required when mode === 'encrypted'. Never logged or sent to web app. */
+  encryption_password: string;
+}
+
+// ── Partial config for the setup wizard — values are filled in progressively.
 export interface SetupDraftConfig {
+  /** Human-readable name the user gives this backup job, e.g. "Home documents". */
+  label: string;
   role: UserRole;
   source_folders: string[];
   repository_path: string;

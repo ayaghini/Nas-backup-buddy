@@ -128,12 +128,12 @@ Exit criteria:
 
 Goal: prove backup safety controls work end to end.
 
-Status: mock/offline health and restore drill flows are wired into shared app state. Repository check failure, canary mismatch, and restore failure map to Critical and block Protected status in the UI. Real Kopia backup/check/restore execution and real Syncthing status polling remain future work.
+Status: mock/offline health and restore drill flows are wired into shared app state. Repository verification failure, canary mismatch, and restore failure map to Critical and block Protected status in the UI. Real Kopia backup/verify/restore execution and real Syncthing status polling remain future work.
 
 Deliverables:
 
 - Backup runner.
-- Repository check runner.
+- Repository verification runner using `kopia snapshot verify`.
 - Sync status checker.
 - Restore drill runner.
 - Canary checksum verification.

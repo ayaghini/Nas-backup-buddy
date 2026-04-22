@@ -1,4 +1,5 @@
-import { Activity, AlertTriangle, CheckCircle, HardDrive, RotateCcw, Shield, XCircle } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle, ChevronRight, HardDrive, RotateCcw, Shield, XCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import {
   formatBytes,
@@ -46,10 +47,27 @@ function CheckRow({ done, label }: { done: boolean; label: string }) {
   );
 }
 
+// Maps a blocking reason text fragment to the route that resolves it.
+const REASON_ROUTES: Array<{ fragment: string; to: string; label: string }> = [
+  { fragment: 'recovery key', to: '/recovery', label: 'Set up →' },
+  { fragment: 'Recovery key', to: '/recovery', label: 'Set up →' },
+  { fragment: 'not configured', to: '/setup',   label: 'Run wizard →' },
+  { fragment: 'repository',    to: '/backup',   label: 'View →' },
+];
+
+function actionForReason(reason: string): { to: string; label: string } | null {
+  for (const { fragment, to, label } of REASON_ROUTES) {
+    if (reason.includes(fragment)) return { to, label };
+  }
+  return null;
+}
+
 export function Dashboard() {
-  const { setupState, readiness, offlineMode, toolStatus } = useApp();
+  const navigate = useNavigate();
+  const { setupState, readiness, offlineMode, toolStatus, realLab, wizardConfig, masterPasswordSet } = useApp();
   const repo = setupState.kopia_repository;
   const sync = setupState.syncthing_folder;
+  const drillPassed = realLab.drill?.result === 'pass';
 
   const backupAgo = repo.last_snapshot_at
     ? new Date(repo.last_snapshot_at).toLocaleString()
@@ -60,11 +78,11 @@ export function Dashboard() {
 
   const setupChecks = [
     { done: repo.status !== 'not_configured', label: 'Kopia repository configured' },
-    { done: repo.status === 'check_passed', label: 'Repository check passed' },
+    { done: repo.status === 'check_passed', label: 'Repository verification passed' },
     { done: sync.state !== 'not_configured', label: 'Syncthing folder configured' },
     { done: sync.state === 'in_sync', label: 'Repository synced to peer' },
     { done: setupState.recovery_key_confirmed, label: 'Recovery key saved externally' },
-    { done: false, label: 'Restore drill completed' },
+    { done: drillPassed, label: 'Restore drill completed' },
   ];
 
   return (
@@ -77,12 +95,33 @@ export function Dashboard() {
         <ReadinessBadge readiness={readiness?.readiness} />
       </div>
 
+      {/* Master password setup gate — must appear before anything else that requires Kopia */}
+      {!masterPasswordSet && (
+        <div className="flex items-center justify-between gap-4 p-4 rounded-lg border border-amber-500/30 bg-amber-500/5">
+          <div className="flex items-start gap-3">
+            <Shield size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <div className="text-sm font-semibold text-amber-300">Set your master encryption password</div>
+              <div className="text-xs text-slate-400 mt-0.5">
+                Required before any backup can run. Set it once — Kopia uses it for all encrypted repositories.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/recovery')}
+            className="flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300 whitespace-nowrap flex-shrink-0 font-medium"
+          >
+            Set password <ChevronRight size={11} />
+          </button>
+        </div>
+      )}
+
       {offlineMode && (
         <div className="flex items-start gap-2.5 p-3 rounded-lg border border-amber-500/20 bg-amber-500/5 text-xs text-amber-300/80">
           <AlertTriangle size={14} className="flex-shrink-0 mt-0.5 text-amber-400" />
           <span>
-            <strong>Offline / mock mode.</strong> The web API is not connected.
-            Health data shown here is from local mock state only.
+            <strong>Web API not connected.</strong> Health data reflects local operations only.
+            Pairing with the coordination server is a future step.
           </span>
         </div>
       )}
@@ -94,11 +133,25 @@ export function Dashboard() {
             <XCircle size={14} className="text-red-400" />
             <span className="text-xs font-semibold text-red-400 uppercase tracking-wide">Setup Blocked</span>
           </div>
-          {readiness.blocking_reasons.map((r, i) => (
-            <div key={i} className="flex items-start gap-2 text-sm text-red-300">
-              <span className="text-red-500 mt-0.5">•</span>{r}
-            </div>
-          ))}
+          {readiness.blocking_reasons.map((r, i) => {
+            const action = actionForReason(r);
+            return (
+              <div key={i} className="flex items-center justify-between gap-2">
+                <div className="flex items-start gap-2 text-sm text-red-300 min-w-0">
+                  <span className="text-red-500 mt-0.5 flex-shrink-0">•</span>
+                  <span className="truncate">{r}</span>
+                </div>
+                {action && (
+                  <button
+                    onClick={() => navigate(action.to)}
+                    className="flex items-center gap-0.5 text-xs text-sky-400 hover:text-sky-300 whitespace-nowrap flex-shrink-0"
+                  >
+                    {action.label} <ChevronRight size={11} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -133,12 +186,19 @@ export function Dashboard() {
             <div className="text-xs text-slate-500 mt-0.5">{syncthingStateLabel(sync.state)}</div>
           </div>
         </div>
-        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 flex items-start gap-3">
-          <div className="p-2 rounded-lg flex-shrink-0 bg-amber-500/10 text-amber-400"><RotateCcw size={16} /></div>
+        <div className={`bg-slate-900 border rounded-lg p-4 flex items-start gap-3 ${drillPassed ? 'border-emerald-800/50' : 'border-slate-800'}`}>
+          <div className={`p-2 rounded-lg flex-shrink-0 ${drillPassed ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+            <RotateCcw size={16} />
+          </div>
           <div>
-            <div className="text-sm font-bold text-slate-100">Never run</div>
+            <div className="text-sm font-bold text-slate-100">
+              {drillPassed ? 'Passed' : realLab.drill ? 'Failed' : 'Never run'}
+            </div>
             <div className="text-xs text-slate-400 mt-0.5">Restore Drill</div>
-            <div className="text-xs text-red-400 mt-0.5">Blocks Protected status</div>
+            {drillPassed
+              ? <div className="text-xs text-emerald-400 mt-0.5">Canary checksum verified</div>
+              : <div className="text-xs text-red-400 mt-0.5">Blocks Protected status</div>
+            }
           </div>
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 flex items-start gap-3">
@@ -147,7 +207,8 @@ export function Dashboard() {
             <div className="text-sm font-bold text-slate-100">{roleLabel(setupState.role)}</div>
             <div className="text-xs text-slate-400 mt-0.5">Current Role</div>
             <div className="text-xs text-slate-500 mt-0.5">
-              {formatBytes(repo.repo_size_bytes)} in repo
+              {wizardConfig ? 'Setup wizard complete' : 'Setup wizard pending'}
+              {repo.repo_size_bytes !== null ? ` · ${formatBytes(repo.repo_size_bytes)}` : ''}
             </div>
           </div>
         </div>
