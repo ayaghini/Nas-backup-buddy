@@ -7,7 +7,7 @@ import {
 import { useApp } from '../context/AppContext';
 import type {
   FolderPeerAssignment, PeerSyncMode, SyncFolderConfig,
-  SyncPeer, SyncthingFolderStatus, SyncthingRunStatus,
+  SyncPeer, SyncthingLiveStatus, SyncthingRunStatus,
 } from '../lib/types';
 import { syncthingStateLabel } from '../lib/mock-state';
 import {
@@ -15,6 +15,7 @@ import {
   applySyncthingSetup,
   ensureSyncthingRunning,
 } from '../lib/tauri-bridge';
+import { savePersistedConfig } from '../lib/persistence';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -197,11 +198,11 @@ function SyncStateBadge({ state }: { state: string }) {
 }
 
 function FoldersStep({
-  folders, sourceFolders, primaryFolderStatus, onChange, onNext, onBack,
+  folders, sourceFolders, liveStatus, onChange, onNext, onBack,
 }: {
   folders: SyncFolderConfig[];
   sourceFolders: string[];
-  primaryFolderStatus: SyncthingFolderStatus;
+  liveStatus: SyncthingLiveStatus | null;
   onChange: (folders: SyncFolderConfig[]) => void;
   onNext: () => void;
   onBack: () => void;
@@ -242,14 +243,23 @@ function FoldersStep({
     setNewLabel('');
   }
 
-  // Derive a display sync state for a folder: match by path against the primary status.
-  function folderState(f: SyncFolderConfig): string {
-    // In the future, each folder will have its own live status. For now we use
-    // the primary repo status only for the folder whose path matches the configured repo.
-    if (f.source === 'kopia' && primaryFolderStatus.state !== 'not_configured') {
-      return primaryFolderStatus.state;
-    }
-    return 'not_configured';
+  // Look up live state for this folder from the Syncthing REST API data.
+  function folderLiveState(f: SyncFolderConfig): string {
+    if (!liveStatus?.running) return 'not_configured';
+    const live = liveStatus.folders.find(lf => lf.folder_id === f.folder_id);
+    return live?.state ?? 'not_configured';
+  }
+
+  function folderBytesPending(f: SyncFolderConfig): number | null {
+    if (!liveStatus?.running) return null;
+    const live = liveStatus.folders.find(lf => lf.folder_id === f.folder_id);
+    return live?.bytes_pending ?? null;
+  }
+
+  function folderPeersConnected(f: SyncFolderConfig): string[] {
+    if (!liveStatus?.running) return [];
+    const live = liveStatus.folders.find(lf => lf.folder_id === f.folder_id);
+    return (live?.peer_device_ids ?? []).filter(id => liveStatus.connected_peer_ids.includes(id));
   }
 
   return (
@@ -273,11 +283,9 @@ function FoldersStep({
         )}
 
         {kopiaFolders.map(f => {
-          const state = folderState(f);
-          const lastSync = primaryFolderStatus.last_sync_at
-            ? new Date(primaryFolderStatus.last_sync_at).toLocaleString()
-            : null;
-          const bytesPending = primaryFolderStatus.bytes_pending;
+          const state = folderLiveState(f);
+          const bytes = folderBytesPending(f);
+          const connectedPeers = folderPeersConnected(f);
 
           return (
             <label
@@ -309,13 +317,17 @@ function FoldersStep({
                 </div>
                 <div className="text-xs font-mono text-slate-500 truncate">{f.path}</div>
                 {state !== 'not_configured' && (
-                  <div className="flex gap-4 text-xs text-slate-500">
-                    {lastSync && <span>Last sync: {lastSync}</span>}
-                    {bytesPending !== null && (
-                      <span>{bytesPending === 0 ? 'Up to date' : `${bytesPending} bytes pending`}</span>
+                  <div className="flex gap-4 text-xs text-slate-500 flex-wrap">
+                    {bytes !== null && (
+                      <span>{bytes === 0 ? 'Up to date' : `${bytes.toLocaleString()} bytes pending`}</span>
                     )}
-                    {primaryFolderStatus.peer_connected && (
-                      <span className="text-emerald-400/70">Peer online</span>
+                    {connectedPeers.length > 0 && (
+                      <span className="text-emerald-400/70">{connectedPeers.length} peer{connectedPeers.length !== 1 ? 's' : ''} online</span>
+                    )}
+                    {liveStatus?.my_device_id && (
+                      <span className="text-slate-600 font-mono truncate max-w-48">
+                        {liveStatus.my_device_id.slice(0, 14)}…
+                      </span>
                     )}
                   </div>
                 )}
@@ -354,7 +366,7 @@ function FoldersStep({
                         className="bg-transparent text-xs font-medium text-slate-200 focus:outline-none focus:text-white w-36"
                       />
                     </div>
-                    <SyncStateBadge state={folderState(f)} />
+                    <SyncStateBadge state={folderLiveState(f)} />
                     <span className="text-xs text-amber-500/60 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">
                       Raw — not Kopia-managed
                     </span>
@@ -791,6 +803,9 @@ function ReviewStep({
         }),
       );
       setResult(r);
+      if (r.errors.length === 0) {
+        void savePersistedConfig({ syncthingConfigured: true });
+      }
     } catch (e: unknown) {
       setApplyError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -961,7 +976,7 @@ function ReviewStep({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function SyncthingConnection() {
-  const { wizardConfigs, setupState } = useApp();
+  const { wizardConfigs, syncthingLiveStatus } = useApp();
 
   const [step, setStep] = useState<StepIndex>(0);
   const [maxReached, setMaxReached] = useState<StepIndex>(0);
@@ -1049,7 +1064,7 @@ export function SyncthingConnection() {
         <FoldersStep
           folders={folders}
           sourceFolders={sourceFolders}
-          primaryFolderStatus={setupState.syncthing_folder}
+          liveStatus={syncthingLiveStatus}
           onChange={setFolders}
           onNext={next}
           onBack={back}

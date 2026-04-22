@@ -174,6 +174,26 @@ export interface TransportFolderInfo {
   note: string;
 }
 
+// ── Syncthing live status (polled from REST API) ──────────────────────────────
+
+export interface SyncthingFolderLiveStatus {
+  folder_id: string;
+  label: string;
+  raw_state: string;
+  state: SyncthingState;
+  bytes_pending: number;
+  files_pending: number;
+  peer_device_ids: string[];
+}
+
+export interface SyncthingLiveStatus {
+  running: boolean;
+  my_device_id: string | null;
+  folders: SyncthingFolderLiveStatus[];
+  connected_peer_ids: string[];
+  web_ui_url: string;
+}
+
 // ── Per-repo backup job status ────────────────────────────────────────────────
 
 export type JobState = 'idle' | 'running' | 'done' | 'error';

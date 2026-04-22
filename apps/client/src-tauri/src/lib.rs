@@ -139,6 +139,40 @@ pub struct SyncthingFolderResult {
     pub note: String,
 }
 
+// ── Syncthing live status types ───────────────────────────────────────────────
+
+/// Live status for one Syncthing folder, polled from the REST API.
+#[derive(Debug, Serialize)]
+pub struct SyncthingFolderLiveStatus {
+    pub folder_id: String,
+    pub label: String,
+    /// Raw state string from Syncthing: "idle", "scanning", "syncing", "error", "unknown"
+    pub raw_state: String,
+    /// Mapped to our SyncthingState values for the frontend
+    pub state: String,
+    /// Bytes the local device still needs from peers
+    pub bytes_pending: i64,
+    /// Number of files still needed
+    pub files_pending: i64,
+    /// Device IDs this folder is shared with
+    pub peer_device_ids: Vec<String>,
+}
+
+/// Full live Syncthing status returned to the frontend on each poll.
+#[derive(Debug, Serialize)]
+pub struct SyncthingLiveStatus {
+    /// Whether the Syncthing daemon is reachable on port 8384
+    pub running: bool,
+    /// This device's Syncthing device ID
+    pub my_device_id: Option<String>,
+    /// All configured folders with their current states
+    pub folders: Vec<SyncthingFolderLiveStatus>,
+    /// Device IDs of currently connected peers
+    pub connected_peer_ids: Vec<String>,
+    /// Web UI URL
+    pub web_ui_url: String,
+}
+
 // ── Syncthing wizard apply types ──────────────────────────────────────────────
 
 /// One peer device to register in Syncthing.
@@ -497,6 +531,19 @@ fn get_tool_status(app: tauri::AppHandle) -> ToolStatusResponse {
         &platform,
         resource_dir.as_deref(),
     );
+
+    // If the Syncthing binary wasn't found on PATH or in the bundle BUT the
+    // daemon is already running on port 8384 (e.g. a user-installed Syncthing),
+    // report it as present — we can still talk to it via the REST API.
+    let syncthing = if syncthing == ToolStatus::Missing {
+        let running = std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 1], 8384)),
+            std::time::Duration::from_millis(500),
+        ).is_ok();
+        if running { ToolStatus::Present } else { ToolStatus::Missing }
+    } else {
+        syncthing
+    };
 
     ToolStatusResponse {
         kopia: tool_status_str(&kopia).to_string(),
@@ -1475,6 +1522,54 @@ fn add_syncthing_folder(
     })
 }
 
+/// Search all known Syncthing home directory locations and return the first
+/// config.xml that exists. Checks the app-managed home first, then falls
+/// back to the platform defaults for user-installed Syncthing.
+fn find_syncthing_config_xml(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+
+    // 1. App-managed home (created by ensure_syncthing_running)
+    if let Ok(data_dir) = app.path().app_data_dir() {
+        candidates.push(data_dir.join("syncthing").join("config.xml"));
+    }
+
+    // 2. Platform default homes for user-installed Syncthing
+    #[cfg(target_os = "windows")]
+    {
+        // winget / installer default: %LOCALAPPDATA%\Syncthing\
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            candidates.push(std::path::PathBuf::from(&local).join("Syncthing").join("config.xml"));
+        }
+        // Older default: %APPDATA%\Syncthing\
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            candidates.push(std::path::PathBuf::from(&appdata).join("Syncthing").join("config.xml"));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            candidates.push(
+                std::path::PathBuf::from(&home)
+                    .join("Library").join("Application Support")
+                    .join("Syncthing").join("config.xml"),
+            );
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let config_home = std::env::var("XDG_CONFIG_HOME")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config")
+            });
+        candidates.push(config_home.join("syncthing").join("config.xml"));
+    }
+
+    candidates.into_iter().find(|p| p.exists())
+}
+
 /// Read the Syncthing GUI/REST API key from config.xml in the Syncthing home directory.
 /// The key is stored in plaintext in `<gui><apikey>VALUE</apikey></gui>`.
 fn read_syncthing_api_key(syncthing_home: &std::path::Path) -> Result<String, String> {
@@ -1493,6 +1588,164 @@ fn read_syncthing_api_key(syncthing_home: &std::path::Path) -> Result<String, St
         return Err("Empty API key in Syncthing config.xml".to_string());
     }
     Ok(key)
+}
+
+/// Map a Syncthing folder `state` string + pending bytes to our SyncthingState values.
+fn map_folder_state(raw: &str, bytes_pending: i64, peer_connected: bool) -> String {
+    match raw {
+        "syncing" | "sync-preparing" | "sync-waiting" => "syncing".into(),
+        "scanning" => "syncing".into(),
+        "error" | "scan-waiting" => "error".into(),
+        "idle" if !peer_connected => "folder_configured".into(),
+        "idle" if bytes_pending > 0 => "stale".into(),
+        "idle" => "in_sync".into(),
+        "" | "unknown" => "folder_configured".into(),
+        _ => "folder_configured".into(),
+    }
+}
+
+/// Query the running Syncthing daemon and return live folder + peer status.
+///
+/// Returns a result where `running = false` if the daemon is unreachable.
+/// Never returns an Err — all failures are represented as `running = false`
+/// so the frontend can show a clean "daemon not running" state.
+#[tauri::command]
+fn get_syncthing_live_status(app: tauri::AppHandle) -> SyncthingLiveStatus {
+    use tauri::Manager;
+    let port: u16 = 8384;
+    let base = format!("http://127.0.0.1:{port}");
+    let not_running = SyncthingLiveStatus {
+        running: false,
+        my_device_id: None,
+        folders: vec![],
+        connected_peer_ids: vec![],
+        web_ui_url: base.clone(),
+    };
+
+    // Fast TCP probe first to avoid hanging on a dead connection
+    if std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        std::time::Duration::from_millis(500),
+    ).is_err() {
+        return not_running;
+    }
+
+    // Read API key
+    let config_xml = match find_syncthing_config_xml(&app) {
+        Some(p) => p,
+        None => return not_running,
+    };
+    let syncthing_home = match config_xml.parent() {
+        Some(p) => p.to_path_buf(),
+        None => return not_running,
+    };
+    let api_key = match read_syncthing_api_key(&syncthing_home) {
+        Ok(k) => k,
+        Err(_) => return not_running,
+    };
+
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(5))
+        .build();
+
+    // GET /rest/system/status → device ID
+    let my_device_id: Option<String> = agent
+        .get(&format!("{base}/rest/system/status"))
+        .set("X-API-Key", &api_key)
+        .call()
+        .ok()
+        .and_then(|r| r.into_json::<serde_json::Value>().ok())
+        .and_then(|v| v["myID"].as_str().map(|s| s.to_string()));
+
+    // GET /rest/config → folders + devices
+    let config: serde_json::Value = match agent
+        .get(&format!("{base}/rest/config"))
+        .set("X-API-Key", &api_key)
+        .call()
+        .ok()
+        .and_then(|r| r.into_json().ok())
+    {
+        Some(v) => v,
+        None => return not_running,
+    };
+
+    // GET /rest/system/connections → connected peers
+    let connections: serde_json::Value = agent
+        .get(&format!("{base}/rest/system/connections"))
+        .set("X-API-Key", &api_key)
+        .call()
+        .ok()
+        .and_then(|r| r.into_json().ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    let connected_peer_ids: Vec<String> = connections["connections"]
+        .as_object()
+        .map(|map| {
+            map.iter()
+                .filter(|(_, v)| v["connected"].as_bool().unwrap_or(false))
+                .map(|(k, _)| k.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Build per-folder status
+    let config_folders = config["folders"].as_array().cloned().unwrap_or_default();
+    let mut folders: Vec<SyncthingFolderLiveStatus> = Vec::new();
+
+    for folder in &config_folders {
+        let folder_id = folder["id"].as_str().unwrap_or("").to_string();
+        let label = folder["label"].as_str().unwrap_or(&folder_id).to_string();
+
+        // Devices sharing this folder
+        let peer_device_ids: Vec<String> = folder["devices"]
+            .as_array()
+            .map(|devs| {
+                devs.iter()
+                    .filter_map(|d| d["deviceID"].as_str())
+                    .filter(|id| Some(id.to_string()) != my_device_id) // exclude self
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let peer_connected = peer_device_ids.iter().any(|id| connected_peer_ids.contains(id));
+
+        // GET /rest/db/status?folder=<id>
+        let db_status: serde_json::Value = agent
+            .get(&format!("{base}/rest/db/status"))
+            .query("folder", &folder_id)
+            .set("X-API-Key", &api_key)
+            .call()
+            .ok()
+            .and_then(|r| r.into_json().ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+
+        let raw_state = db_status["state"].as_str().unwrap_or("unknown").to_string();
+        let bytes_pending = db_status["needBytes"].as_i64().unwrap_or(0);
+        let files_pending = db_status["needFiles"].as_i64()
+            .or_else(|| db_status["needItems"].as_i64())
+            .unwrap_or(0);
+
+        let state = map_folder_state(&raw_state, bytes_pending, peer_connected);
+
+        folders.push(SyncthingFolderLiveStatus {
+            folder_id,
+            label,
+            raw_state,
+            state,
+            bytes_pending,
+            files_pending,
+            peer_device_ids,
+        });
+    }
+
+    SyncthingLiveStatus {
+        running: true,
+        my_device_id,
+        folders,
+        connected_peer_ids,
+        web_ui_url: base,
+    }
 }
 
 /// Apply devices, folders, and peer assignments via the Syncthing REST API.
@@ -1525,12 +1778,17 @@ fn apply_syncthing_setup(
     )
     .map_err(|_| "Syncthing is not running — start it on the daemon step first.".to_string())?;
 
-    // Resolve Syncthing home dir (same path used by ensure_syncthing_running)
-    let syncthing_home = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Cannot resolve app data dir: {e}"))?
-        .join("syncthing");
+    // Find config.xml — checks app-managed home first, then system installation paths.
+    let config_xml = find_syncthing_config_xml(&app)
+        .ok_or_else(|| {
+            "Syncthing config.xml not found. Checked the app-managed home and the \
+             system default locations. If Syncthing is installed in a custom location, \
+             open its web UI and note the API key shown under Actions → Settings → GUI."
+                .to_string()
+        })?;
+    let syncthing_home = config_xml.parent()
+        .ok_or("Cannot determine Syncthing home from config.xml path")?
+        .to_path_buf();
 
     let api_key = read_syncthing_api_key(&syncthing_home)?;
 
@@ -2107,6 +2365,7 @@ pub fn run() {
             apply_syncthing_setup,
             save_app_config,
             load_app_config,
+            get_syncthing_live_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building NAS Backup Buddy")

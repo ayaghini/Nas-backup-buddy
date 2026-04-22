@@ -18,11 +18,13 @@ import type {
   RepositoryInitResult,
   SyncthingApiPlanSummary,
   SyncthingFolderResult,
+  SyncthingLiveStatus,
   SyncthingRunStatus,
   TestLabInfo,
   ToolProbeResult,
   TransportFolderInfo,
 } from './types';
+export type { SyncthingLiveStatus };
 import { DEFAULT_SETUP_STATE, DEFAULT_HEALTH_REPORT } from './mock-state';
 
 declare global {
@@ -438,6 +440,22 @@ export async function applySyncthingSetup(
   assignments: ApplySyncthingAssignment[],
 ): Promise<ApplySyncthingResult> {
   return invoke<ApplySyncthingResult>('apply_syncthing_setup', { peers, assignments });
+}
+
+/// Poll the running Syncthing daemon for live folder and peer status.
+/// Returns `running: false` if the daemon is unreachable — never throws.
+export async function getSyncthingLiveStatus(): Promise<SyncthingLiveStatus> {
+  try {
+    return await invoke<SyncthingLiveStatus>('get_syncthing_live_status');
+  } catch {
+    return {
+      running: false,
+      my_device_id: null,
+      folders: [],
+      connected_peer_ids: [],
+      web_ui_url: 'http://127.0.0.1:8384',
+    };
+  }
 }
 
 /// Return the current compile-time platform string, e.g. "x86_64-pc-windows-msvc".

@@ -28,6 +28,8 @@ export interface PersistedConfig {
   recoveryKeyConfirmed: boolean;
   healthReportConsent: boolean;
   offlineMode: boolean;
+  /** True after the user has successfully applied a Syncthing configuration. */
+  syncthingConfigured: boolean;
 }
 
 export async function loadPersistedConfig(): Promise<Partial<PersistedConfig>> {
@@ -39,6 +41,7 @@ export async function loadPersistedConfig(): Promise<Partial<PersistedConfig>> {
       recoveryKeyConfirmed: typeof raw.recoveryKeyConfirmed === 'boolean' ? raw.recoveryKeyConfirmed : false,
       healthReportConsent: typeof raw.healthReportConsent === 'boolean' ? raw.healthReportConsent : false,
       offlineMode: typeof raw.offlineMode === 'boolean' ? raw.offlineMode : false,
+      syncthingConfigured: typeof raw.syncthingConfigured === 'boolean' ? raw.syncthingConfigured : false,
     };
   } catch (e) {
     console.error('[persistence] load failed:', e);

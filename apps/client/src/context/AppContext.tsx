@@ -8,6 +8,7 @@ import type {
   RealDrillResult,
   RepoJobStatus,
   SetupDraftConfig,
+  SyncthingLiveStatus,
   TestLabInfo,
   ToolStatus,
   TransportFolderInfo,
@@ -20,6 +21,7 @@ import {
 import {
   getRealHealthReport,
   getSetupReadiness,
+  getSyncthingLiveStatus,
   getToolStatus,
   hasKopiaPassword,
   initializeKopiaRepository,
@@ -49,6 +51,8 @@ interface AppContextValue {
   masterPasswordSet: boolean;
   /** Per-repo job statuses keyed by wizardConfigs index. */
   repoJobStatuses: Record<number, RepoJobStatus>;
+  /** Live Syncthing status polled every 15 s. Null until first poll completes. */
+  syncthingLiveStatus: SyncthingLiveStatus | null;
   offlineMode: boolean;
   healthReportConsent: boolean;
   recoveryKeyConfirmed: boolean;
@@ -82,6 +86,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   const [wizardConfigs, setWizardConfigs] = useState<SetupDraftConfig[]>([]);
   const [masterPasswordSet, setMasterPasswordSetState] = useState(false);
   const [repoJobStatuses, setRepoJobStatuses] = useState<Record<number, RepoJobStatus>>({});
+  const [syncthingLiveStatus, setSyncthingLiveStatus] = useState<SyncthingLiveStatus | null>(null);
   // True once the persisted store has been loaded into state (prevents saving before loading)
   const [persistedLoaded, setPersistedLoaded] = useState(false);
   const [offlineMode, setOfflineMode] = useState(false);
@@ -142,6 +147,17 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
           }));
         }
       }
+      if (saved.syncthingConfigured) {
+        setSetupState(prev => ({
+          ...prev,
+          syncthing_folder: {
+            ...prev.syncthing_folder,
+            state: prev.syncthing_folder.state === 'not_configured'
+              ? 'folder_configured'
+              : prev.syncthing_folder.state,
+          },
+        }));
+      }
       if (saved.recoveryKeyConfirmed) setRecoveryKeyConfirmed(saved.recoveryKeyConfirmed);
       if (saved.healthReportConsent) setHealthReportConsent(saved.healthReportConsent);
       if (saved.offlineMode) setOfflineMode(saved.offlineMode);
@@ -153,6 +169,60 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     if (!persistedLoaded) return;
     void savePersistedConfig({ wizardConfigs });
   }, [wizardConfigs, persistedLoaded]);
+
+  // Poll Syncthing live status every 15 s and sync it into setupState.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function poll() {
+      if (cancelled) return;
+      const live = await getSyncthingLiveStatus();
+      if (cancelled) return;
+      setSyncthingLiveStatus(live);
+
+      if (live.running && live.folders.length > 0) {
+        // Derive overall SyncthingFolderStatus from the live data
+        const hasError = live.folders.some(f => f.state === 'error');
+        const hasSyncing = live.folders.some(f => f.state === 'syncing');
+        const allInSync = live.folders.every(f => f.state === 'in_sync');
+        const anyPeerConnected = live.connected_peer_ids.length > 0;
+        const totalBytesPending = live.folders.reduce((s, f) => s + f.bytes_pending, 0);
+        const isStale = live.folders.some(f => f.state === 'stale');
+
+        const derivedState = hasError ? 'error'
+          : hasSyncing ? 'syncing'
+          : allInSync ? 'in_sync'
+          : isStale ? 'stale'
+          : anyPeerConnected ? 'device_configured'
+          : 'folder_configured';
+
+        setSetupState(prev => ({
+          ...prev,
+          syncthing_folder: {
+            state: derivedState as ClientSetupState['syncthing_folder']['state'],
+            peer_device_id: live.connected_peer_ids[0] ?? prev.syncthing_folder.peer_device_id,
+            peer_connected: anyPeerConnected,
+            last_sync_at: allInSync ? new Date().toISOString() : prev.syncthing_folder.last_sync_at,
+            bytes_pending: totalBytesPending,
+          },
+        }));
+      } else if (!live.running) {
+        // Daemon stopped — preserve state but clear real-time fields
+        setSetupState(prev => ({
+          ...prev,
+          syncthing_folder: {
+            ...prev.syncthing_folder,
+            peer_connected: false,
+            bytes_pending: null,
+          },
+        }));
+      }
+    }
+
+    void poll();
+    const interval = setInterval(() => { void poll(); }, 15_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // On mount: detect real tool status and update setup state
   useEffect(() => {
@@ -336,6 +406,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       wizardConfig,
       masterPasswordSet,
       repoJobStatuses,
+      syncthingLiveStatus,
       offlineMode,
       healthReportConsent,
       recoveryKeyConfirmed,
