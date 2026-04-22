@@ -6,7 +6,7 @@ Start here when working on the project.
 
 - Feasibility and architecture docs are in place.
 - `apps/web` contains the current coordination web prototype.
-- `apps/client` contains the current Tauri + Rust desktop client scaffold with mock/offline setup, Kopia/Syncthing planning, restore drill, health checks, and fail-closed bundled-tool verification scaffolding.
+- `apps/client` contains the current Tauri + Rust desktop client with setup flows, local persistence, folder pickers, recovery-key handling, generated-data Kopia backup/verify/restore testing, Syncthing transport-folder safety, and fail-closed bundled-tool verification.
 - Release foundations have started with AGPL-3.0-only and a third-party notices placeholder.
 - The project is not production-ready.
 
@@ -30,6 +30,7 @@ Start here when working on the project.
 - [Client App Security And Safety](client-app/security-and-safety.md)
 - [Client App Implementation Map](client-app/implementation-map.md)
 - [Client App Packaging And Release](client-app/packaging-and-release.md)
+- [Client App Current Audit](client-app/current-audit.md)
 
 ## Release Foundations
 

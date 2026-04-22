@@ -175,7 +175,7 @@ export function SettingsView() {
     getCurrentPlatform().then(setPlatform).catch(() => {});
   }, []);
 
-  const kopiaOk = toolStatus.kopia === 'ready' || toolStatus.kopia === 'present';
+  const kopiaInstallNeeded = toolStatus.kopia === 'missing';
 
   return (
     <div className="p-6 space-y-6 max-w-xl">
@@ -184,8 +184,8 @@ export function SettingsView() {
         <h1 className="text-base font-semibold text-slate-100">Settings</h1>
       </div>
 
-      {/* Kopia install helper — shown when missing */}
-      {!kopiaOk && <KopiaInstallHelper platform={platform} />}
+      {/* Kopia install helper — shown when binary is not found */}
+      {kopiaInstallNeeded && <KopiaInstallHelper platform={platform} />}
 
       {/* Mode toggles */}
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
@@ -211,14 +211,20 @@ export function SettingsView() {
           { name: 'Kopia', status: toolStatus.kopia },
           { name: 'Syncthing', status: toolStatus.syncthing },
         ].map(({ name, status }) => {
-          const ok = status === 'ready' || status === 'present';
+          const isReady = status === 'ready';
+          const isPresent = status === 'present';
+          const textColor = isReady ? 'text-emerald-400' : isPresent ? 'text-amber-400' : 'text-red-400';
+          const dotColor = isReady ? 'bg-emerald-400' : isPresent ? 'bg-amber-400' : 'bg-red-400';
           return (
             <div key={name} className="flex items-center justify-between text-sm">
               <span className="text-slate-400">{name}</span>
-              <span className={`flex items-center gap-1.5 text-xs font-medium ${ok ? 'text-emerald-400' : 'text-red-400'}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-emerald-400' : 'bg-red-400'}`} />
+              <span className={`flex items-center gap-1.5 text-xs font-medium ${textColor}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
                 {status}
-                {!ok && name === 'Kopia' && platform && (
+                {isPresent && (
+                  <span className="text-slate-500 font-normal ml-1">— unverified, checksum not confirmed</span>
+                )}
+                {!isReady && !isPresent && name === 'Kopia' && platform && (
                   <span className="text-slate-500 font-normal ml-1">— see install instructions above</span>
                 )}
               </span>

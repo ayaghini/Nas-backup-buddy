@@ -107,6 +107,8 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => { setupStateRef.current = setupState; }, [setupState]);
   const wizardConfigsRef = useRef(wizardConfigs);
   useEffect(() => { wizardConfigsRef.current = wizardConfigs; }, [wizardConfigs]);
+  const masterPasswordSetRef = useRef(masterPasswordSet);
+  useEffect(() => { masterPasswordSetRef.current = masterPasswordSet; }, [masterPasswordSet]);
 
   // On mount: try to load the password from the OS keychain first.
   // Falls back to checking whether it was already set in this process session.
@@ -162,7 +164,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       if (saved.healthReportConsent) setHealthReportConsent(saved.healthReportConsent);
       if (saved.offlineMode) setOfflineMode(saved.offlineMode);
     }).finally(() => setPersistedLoaded(true));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // Save wizardConfigs to disk whenever they change (after initial load)
   useEffect(() => {
@@ -222,7 +224,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     void poll();
     const interval = setInterval(() => { void poll(); }, 15_000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // On mount: detect real tool status and update setup state
   useEffect(() => {
@@ -312,7 +314,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
         next = [...prev, draft];
         // Auto-trigger backup for the new config if password is already set
         const newIdx = next.length - 1;
-        if (masterPasswordSet) {
+        if (masterPasswordSetRef.current) {
           // Delay slightly so wizardConfigsRef is updated before triggerRepoBackup reads it
           setTimeout(() => { void triggerRepoBackup(newIdx); }, 50);
         }
@@ -328,7 +330,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
         status: draft.repository_path ? 'configured' : 'not_configured',
       },
     }));
-  }, []);
+  }, [triggerRepoBackup]);
 
   // Update health report + kopia repository status when a check result arrives
   const updateHealthFromCheckResult = useCallback((result: Pick<RealCheckResult, 'passed'>) => {

@@ -1233,10 +1233,10 @@ fn get_health_report(state: tauri::State<AppTestLabState>) -> HealthReport {
 
     HealthReport {
         last_backup_age_hours: backup_age_hours,
-        last_sync_age_hours: 999.0,  // Syncthing not running in test lab
+        last_sync_age_hours: -1.0,   // Syncthing not configured in test lab → not-applicable sentinel
         free_quota_percent: 100.0,
         restore_drill_age_days: drill_age_days,
-        peer_offline_hours: 999.0,   // No peer in test lab
+        peer_offline_hours: -1.0,   // No peer in test lab → not-applicable sentinel
         repository_check_ok: repo_check_ok,
         repository_check_message: repo_check_message,
     }

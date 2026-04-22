@@ -30,7 +30,7 @@ Decision gate:
 
 Goal: prove the Rust service can validate config and model health without the UI.
 
-Status: scaffold started. Rust modules exist for config, health, redaction, safety validation, and tool manifest modeling. Cargo checks still need to be run in an environment with Rust installed.
+Status: mostly complete for the pre-alpha service foundation. Rust modules exist for config, health, redaction, safety validation, tool manifest modeling, Kopia execution, Syncthing transport-folder preparation, and generated-data test labs. Cargo tests pass in the current development environment.
 
 Deliverables:
 
@@ -40,7 +40,8 @@ Deliverables:
 - Health report types.
 - Redaction module.
 - Safe folder validator.
-- Mock tool runner.
+- Mock/browser fallback runner.
+- Generated-data Kopia test-lab runner.
 - Unit tests.
 
 Required checks:
@@ -56,7 +57,8 @@ Exit criteria:
 
 - Rust tests pass.
 - Service can produce a sample health report without disallowed telemetry.
-- Service can run in mock/offline mode.
+- Service can run in mock/browser fallback mode.
+- Service can run generated-data Kopia backup, verification, and restore-drill flows.
 
 Decision gate:
 
@@ -69,7 +71,7 @@ Decision gate:
 
 Goal: make safe setup understandable.
 
-Status: mock/offline onboarding is implemented in the client scaffold. The wizard supports role-aware setup, source/repository safety checks, hosted-storage quota input, retention settings, recovery-key confirmation, health-report consent, and validation-before-save. Native file pickers, persistent config, keychain storage, and real pairing remain future work.
+Status: implemented for local pre-alpha use. The wizard supports role-aware setup, source/repository safety checks, native source-folder and repository-folder pickers, hosted-storage quota input, retention settings, recovery-key confirmation, health-report consent, validation-before-save, and local persistence. OS keychain storage and real web pairing remain future work.
 
 Deliverables:
 
@@ -92,7 +94,7 @@ Required checks:
 
 Exit criteria:
 
-- User can complete a mock setup.
+- User can complete a local setup.
 - Unsafe setup paths are blocked with clear messages.
 - No paid marketplace or cloud storage features appear.
 - Health-report consent defaults off and persists into local app state.
@@ -101,7 +103,7 @@ Exit criteria:
 
 Goal: make tool management predictable and safe.
 
-Status: manifest modeling, resource manifest scaffolding, tool status types, and real SHA-256 verification exist. macOS arm64 Kopia and Syncthing binaries are bundled with manifest checksums. Other platforms still fail closed until release tooling supplies verified artifacts, and live tool execution is not yet wired into user actions.
+Status: partially implemented. Manifest modeling, resource manifest scaffolding, tool status types, and real SHA-256 verification exist. macOS arm64 Kopia and Syncthing binaries are bundled with manifest checksums. Kopia has guarded generated-data execution paths. Syncthing is currently used for transport-folder validation/config generation only, not live daemon control. Other platforms still fail closed until release tooling supplies verified artifacts.
 
 Deliverables:
 
@@ -128,7 +130,7 @@ Exit criteria:
 
 Goal: prove backup safety controls work end to end.
 
-Status: mock/offline health and restore drill flows are wired into shared app state. Repository verification failure, canary mismatch, and restore failure map to Critical and block Protected status in the UI. Real Kopia backup/verify/restore execution and real Syncthing status polling remain future work.
+Status: partially implemented with real generated-data evidence. Health and restore drill flows are wired into shared app state. Repository verification failure, canary mismatch, and restore failure map to Critical and block Protected status in the UI. The client can create a generated-data Kopia test lab, run a real snapshot, run `kopia snapshot verify`, restore a canary file, and build health from those outcomes. Real Syncthing status polling, scheduled production backups, and peer-held restore evidence remain future work.
 
 Deliverables:
 
@@ -157,6 +159,10 @@ Exit criteria:
 - Failed restore creates a Critical local status and incident payload.
 - Health report remains allowlisted and redacted.
 
+Current gap:
+
+- Test-lab health intentionally reports sync and peer fields as stale because no live Syncthing peer is running in that flow. A future health model should distinguish "not configured in test lab" from a production sync failure.
+
 ## Phase 5: Pairing With Web App
 
 Goal: connect local client health to the coordination platform without leaking sensitive data.
@@ -179,7 +185,7 @@ Required checks:
 
 Exit criteria:
 
-- Client can pair in mock mode.
+- Client can pair in mock/browser fallback mode.
 - Client can emit a sample health report.
 - Client can queue and retry non-sensitive status updates.
 
@@ -209,7 +215,7 @@ Required checks:
 
 Exit criteria:
 
-- A tester can install, launch, complete mock onboarding, and view health status.
+- A tester can install, launch, complete local onboarding, run the generated-data Kopia lab on supported platforms, and view health status.
 - Release artifact checksums are recorded.
 - Update and rollback path is documented.
 

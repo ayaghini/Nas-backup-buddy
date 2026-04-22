@@ -68,19 +68,22 @@ export async function getHealthLevel(report: HealthReport): Promise<string> {
     return await invoke<string>('get_health_level', { report });
   } catch {
     // Compute locally from report fields
+    // Negative values mean "not configured / not applicable" — treat as Ok.
+    const syncAge = report.last_sync_age_hours;
+    const peerAge = report.peer_offline_hours;
     const isCritical =
       report.last_backup_age_hours > 72 ||
-      report.last_sync_age_hours > 72 ||
+      (syncAge >= 0 && syncAge > 72) ||
       report.free_quota_percent < 5 ||
       report.restore_drill_age_days < 0 ||
-      report.peer_offline_hours > 168 ||
+      (peerAge >= 0 && peerAge > 168) ||
       !report.repository_check_ok;
     const isWarning =
       report.last_backup_age_hours > 24 ||
-      report.last_sync_age_hours > 24 ||
+      (syncAge >= 0 && syncAge > 24) ||
       report.free_quota_percent < 15 ||
       report.restore_drill_age_days > 30 ||
-      report.peer_offline_hours > 24;
+      (peerAge >= 0 && peerAge > 24);
     return isCritical ? 'critical' : isWarning ? 'warning' : 'ok';
   }
 }

@@ -17,6 +17,22 @@ Locked v1 decisions:
 - Syncthing is transport only.
 - The app pairs with the web app, but it must work in mock/offline mode until the web API is real.
 
+## Current Prototype State
+
+The client has moved beyond the original mock-only scaffold. The current app can run a local generated-data Kopia test lab on the supported development platform:
+
+- Create an isolated test source, repository, and restore area under the OS temp directory.
+- Verify pinned bundled tool readiness before guarded Kopia execution.
+- Create or connect a Kopia filesystem repository.
+- Run a real Kopia snapshot against generated test data.
+- Run repository verification through `kopia snapshot verify`.
+- Restore the canary file and compare SHA-256 checksums.
+- Build a health report from actual backup, verification, and restore-drill outcomes.
+
+The current Syncthing work is still safety and configuration oriented. The client validates that transport folders are encrypted repository folders, rejects source-folder sharing, and produces redacted transport configuration. It does not yet manage a live Syncthing daemon, poll Syncthing REST status, or prove two-machine replication.
+
+Mock/browser fallback remains useful for UI development without Tauri, but it is no longer the main client-readiness signal.
+
 ## Audience
 
 Primary users:

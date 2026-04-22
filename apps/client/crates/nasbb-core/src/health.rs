@@ -27,9 +27,9 @@ pub struct HealthReport {
     pub restore_drill_age_days: i64,
     /// Hours the peer has been unreachable.
     pub peer_offline_hours: f64,
-    /// Whether the most recent `kopia repository check` passed.
+    /// Whether the most recent Kopia repository verification passed.
     pub repository_check_ok: bool,
-    /// Optional message from the repository check (tool output summary, no paths).
+    /// Optional message from repository verification (tool output summary, no paths).
     pub repository_check_message: Option<String>,
 }
 
@@ -45,6 +45,10 @@ impl HealthReport {
     }
 
     pub fn sync_level(&self) -> HealthLevel {
+        // Negative value = Syncthing not yet configured; not a failure.
+        if self.last_sync_age_hours < 0.0 {
+            return HealthLevel::Ok;
+        }
         if self.last_sync_age_hours > 72.0 {
             HealthLevel::Critical
         } else if self.last_sync_age_hours > 24.0 {
@@ -75,6 +79,10 @@ impl HealthReport {
     }
 
     pub fn peer_offline_level(&self) -> HealthLevel {
+        // Negative value = no peer configured yet; not a failure.
+        if self.peer_offline_hours < 0.0 {
+            return HealthLevel::Ok;
+        }
         if self.peer_offline_hours > 168.0 {
             HealthLevel::Critical // > 7 days
         } else if self.peer_offline_hours > 24.0 {

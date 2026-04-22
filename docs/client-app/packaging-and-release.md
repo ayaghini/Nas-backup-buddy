@@ -134,6 +134,6 @@ Do not publish public release artifacts until:
 - Bundled tool checksums are verified.
 - Release artifact checksums are recorded.
 - Signing status is documented.
-- Mock onboarding works.
+- Local onboarding works.
 - Restore drill failure maps to Critical.
 - Health reports pass telemetry allowlist checks.

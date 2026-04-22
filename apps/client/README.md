@@ -1,7 +1,7 @@
 # NAS Backup Buddy Client
 
 This is the scaffold for the NAS Backup Buddy cross-platform desktop client.
-It is currently a mock/offline-capable safety prototype: the UI is interactive, Rust core logic models the safety rules, and Kopia/Syncthing integration is planned and redacted, but real backup execution is not enabled yet.
+It is currently a pre-alpha safety prototype with real generated-data Kopia execution. The UI is interactive, Rust core logic models the safety rules, and the Tauri backend can create an isolated test lab, run Kopia snapshots, run `kopia snapshot verify`, restore a canary file, and report health from those real outcomes. Syncthing is still configuration and folder-safety only; live daemon/API management is future work.
 
 The client target is:
 
@@ -9,7 +9,7 @@ The client target is:
 - React + TypeScript UI.
 - Rust local service logic.
 - AGPL-3.0-only.
-- Mock/offline capable until the web API is real.
+- Browser/mock fallback for UI development until the web API is real.
 
 ## Safety Rules
 
@@ -52,33 +52,37 @@ cargo check
 cargo test
 ```
 
-The current desktop environment used during scaffolding did not have `cargo` available, so Rust checks must be run on a machine with Rust installed.
+Rust checks are expected to pass on a machine with Rust installed.
 
 ## Current Scaffold
 
 The client currently includes:
 
-- Interactive UI views for dashboard, setup, backup plan, Syncthing connection, restore drill, health checks, logs, settings, and about/license.
-- Shared React context for setup state, health state, tool status, wizard configuration, logs, and mock operation results.
+- Interactive UI views for dashboard, setup, backup plan, Syncthing connection, restore drill, health checks, logs, settings, recovery key, and about/license.
+- Native folder browsing for source folders and encrypted repository paths in the setup wizard.
+- Shared React context and persistence for setup state, health state, tool status, wizard configuration, logs, and operation results.
 - Rust core modules for role-aware config validation, health threshold mapping, redaction, source-folder safety, Kopia command planning, Syncthing API planning, integration readiness, and bundled tool manifest modeling.
 - Real SHA-256 verification logic for bundled tool checks.
 - A bundled-tool manifest in `src-tauri/resources/tool-manifest.json`; macOS arm64 Kopia and Syncthing entries point at packaged `resources/binaries/*` paths and are filled with real checksums, while other platforms intentionally fail closed until release tooling supplies real binaries.
 - Pinned macOS arm64 Kopia and Syncthing binaries under `src-tauri/resources/binaries/`.
-- Mock/offline backup, repository verification, and restore drill flows that update health and Protected-gate state.
+- A generated-data test lab that runs real Kopia repository creation/connection, snapshot creation, `snapshot verify`, restore, and canary SHA-256 comparison.
+- Syncthing transport-folder preparation that rejects source folders and emits redacted configuration snippets without requiring a running Syncthing daemon.
+- Browser/mock fallback backup, verification, and restore-drill flows for UI development without Tauri.
 
 ## Current Progress
 
 | Area | Progress | Notes |
 | --- | ---: | --- |
-| React/Tauri UI scaffold | `███████░░░` 70% | Main views are interactive in mock/offline mode and Rust checks pass. |
+| React/Tauri UI scaffold | `████████░░` 80% | Main views are interactive, persisted locally, and use native folder pickers where safety matters. |
 | Rust safety core | `████████░░` 80% | Config, health, redaction, tool status, command planning, and readiness models have passing Cargo checks. |
-| Kopia/Syncthing planning | `█████░░░░░` 50% | Plans, redaction, macOS arm64 bundled binaries, and checksum verification exist; real guarded execution is not enabled. |
-| Restore drill flow | `██████░░░░` 60% | Mock pass, canary mismatch, and failure paths update health state. Real Kopia restore is future work. |
-| Release readiness | `███░░░░░░░` 30% | Manifest/resources and macOS arm64 tool inventory exist; signing, all-platform binaries, and complete license inventory remain. |
+| Kopia/Syncthing integration | `██████░░░░` 60% | Kopia has guarded generated-data execution; Syncthing has safe transport-folder preparation but no live daemon management yet. |
+| Restore drill flow | `███████░░░` 70% | Real generated-data restore drill compares canary checksums and updates health state. Peer-held restores remain future work. |
+| Release readiness | `████░░░░░░` 40% | Manifest/resources and macOS arm64 tool inventory exist; signing, all-platform binaries, and complete license inventory remain. |
 
 ## Known Gaps
 
-- Real Kopia and Syncthing execution is not wired into user actions yet.
+- Kopia execution is currently limited to generated-data test lab flows and guarded user-repository actions; production backup scheduling is not implemented yet.
+- Syncthing execution is not wired into user actions yet. Current Syncthing work validates and prepares transport-folder configuration only.
 - Only macOS arm64 Kopia and Syncthing binaries are bundled; other platform manifest entries intentionally fail closed until release tooling fills them.
 - Real web API pairing is not implemented yet.
 - OS keychain integration is not implemented yet.

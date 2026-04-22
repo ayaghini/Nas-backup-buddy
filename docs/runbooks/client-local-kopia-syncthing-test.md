@@ -2,303 +2,224 @@
 
 ## Purpose
 
-Step-by-step procedure for testing the NAS Backup Buddy desktop client setup locally in mock/offline mode. Use this runbook to validate:
+Step-by-step procedure for testing the NAS Backup Buddy desktop client locally. This runbook now covers the real generated-data Kopia test lab as well as the remaining browser/mock fallback checks.
 
-- Config validation logic for all three roles.
-- Kopia command planning and secret redaction.
-- Syncthing folder safety (source folder rejection).
-- Mock backup and restore drill flows.
-- Health threshold evaluation.
+Use it to validate:
+
+- Role-aware setup and folder safety.
+- Native folder selection in the setup wizard.
+- Pinned bundled-tool detection.
+- Real generated-data Kopia snapshot, `snapshot verify`, restore, and canary checksum verification.
+- Syncthing transport-folder safety and redacted configuration output.
+- Health threshold evaluation from recorded test-lab outcomes.
 - Log redaction behavior.
 
-This runbook does NOT describe a real Kopia or Syncthing execution. See `docs/runbooks/proof-of-concept.md` for the two-machine manual proof of concept with real tools.
-
----
+This runbook does not yet prove production backup protection. It does not manage a live Syncthing daemon, sync to a peer, or restore from a peer-held repository copy.
 
 ## Prerequisites
 
 - Node.js 18+ and npm.
-- (Optional) Rust and Cargo for Rust-side checks.
-- A browser or the Vite dev server.
+- Rust and Cargo.
+- Tauri prerequisites for the local platform.
+- A supported bundled-tool platform. The current verified bundled binaries are macOS arm64.
 
----
+## Step 1: Install And Verify
 
-## Step 1: Start the client in mock/offline mode
+From the repository root:
 
 ```bash
 cd apps/client
 npm install
-npm run dev
+npm run typecheck
+npm run lint
+npm run build
+cargo test
 ```
 
-Open `http://localhost:1420` (or the URL shown by Vite).
+Expected:
 
-The app starts in mock/offline mode by default. The sidebar shows "Offline mode" at the bottom.
+- TypeScript typecheck passes.
+- ESLint passes.
+- Vite build passes.
+- Rust tests pass, with the ignored manual smoke test still ignored unless explicitly requested.
 
-**Expected:** Dashboard loads with mock state. No Tauri binary is required.
+## Step 2: Start The Desktop Client
 
----
+```bash
+cd apps/client
+npm run tauri dev
+```
 
-## Step 2: Validate the setup wizard
+Expected:
+
+- Vite starts on the port configured by Tauri.
+- The Tauri desktop window opens.
+- Settings shows tool status for Kopia and Syncthing.
+
+Browser-only development is still possible with `npm run dev`, but browser mode uses fallback behavior and is not release evidence.
+
+## Step 3: Validate Setup Wizard
 
 Navigate to **Setup Wizard**.
 
-### Test: Data Owner
+Data Owner:
 
-1. Select **Data Owner** role. Click Continue.
-2. Add source folder `/home/user/documents`. Click Continue.
-3. Enter repository path `/home/user/.nasbb-repo`. Click Continue.
-4. Hosted storage step — skip (not required). Click Continue.
-5. Confirm recovery key saved. Click Continue.
-6. Set retention keep_last to 5. Click Continue.
-7. Leave health consent off. Click Continue.
-8. Review summary. Click **Save configuration**.
+1. Select **Data Owner**.
+2. Use the browse button to choose at least one source folder.
+3. Use the browse button to choose an encrypted repository path outside the source folder.
+4. Confirm recovery key/password backup.
+5. Configure retention.
+6. Save configuration.
 
-**Expected pass:** "Setup configuration saved." No validation errors.
+Expected:
 
-### Test: Source folder used as repository (should fail)
+- Unsafe repository paths are rejected.
+- Repository path cannot equal or live inside a source folder.
+- Health-report consent remains explicit.
 
-1. Data Owner.
-2. Source folder: `/home/user/documents`.
-3. Repository path: `/home/user/documents` (same as source).
+Storage Host:
 
-**Expected fail:** Error "Repository path must not be the same as a source folder."
+1. Select **Storage Host**.
+2. Leave source folders and repository path empty.
+3. Choose hosted peer-storage path.
+4. Set quota above zero.
 
-### Test: Repository inside source (should fail)
+Expected:
 
-1. Source: `/home/user/documents`.
-2. Repository: `/home/user/documents/repo`.
+- Missing owner-side source/repository fields do not block pure host mode.
+- Missing hosted path or quota does block host mode.
 
-**Expected fail:** Error "Repository path must not be inside a source folder."
+Reciprocal Match:
 
-### Test: Storage Host (no source or repository required)
+1. Select **Reciprocal Match**.
+2. Configure both owner-side source/repository fields and host-side storage/quota fields.
 
-1. Select **Storage Host** role.
-2. Skip source folders and repository steps.
-3. Enter hosted storage path `/mnt/peer-storage`, quota 500 GB.
+Expected:
 
-**Expected pass:** No errors for missing source or repository.
+- Both sides are required.
+- Hosted storage must not be inside any source folder.
 
-### Test: Reciprocal Match (both sides required)
+## Step 4: Probe Tools
 
-1. Select **Reciprocal Match** role.
-2. Source folders: `/home/user/documents`.
-3. Repository: `/home/user/.nasbb-repo`.
-4. Hosted storage: `/mnt/peer-storage`, quota 500 GB.
+Open **Settings** and check tool status.
 
-**Expected pass:** All fields accepted.
+Expected on a supported bundled platform:
 
-### Test: Reciprocal Match missing hosted storage (should fail)
+- Kopia is `ready` after version and checksum verification.
+- Syncthing is `ready` after version and checksum verification.
 
-1. Same as above but leave hosted storage path empty.
+Expected on unsupported platforms:
 
-**Expected fail:** "Enter the hosted peer-storage path."
+- Bundled tools fail closed until platform binaries and checksums are added.
+- PATH tools are development fallback only and must not be treated as release evidence.
 
----
+## Step 5: Run The Generated-Data Kopia Lab
 
-## Step 3: Validate Kopia command planning
+Open the client test-lab or backup/restore views that expose the generated-data flow.
 
-Navigate to **Backup Plan**.
+Run the steps in order:
 
-**Expected:** Command plan table shows five planned commands:
-- `kopia --version`
-- `kopia repository create filesystem --path [REDACTED]`
-- `kopia snapshot verify`
-- `kopia snapshot create [REDACTED]`
-- `kopia snapshot list`
+1. Create test lab.
+2. Probe tools.
+3. Run test backup.
+4. Run repository verification.
+5. Run restore drill.
+6. View health report.
 
-**Verify:**
-- No real paths appear in the display_command column.
-- `KOPIA_PASSWORD` is not shown anywhere in the UI.
-- Source folder paths are replaced with `[REDACTED]`.
+Expected:
 
-### Test: Run mock backup
+- The test lab is created only under the OS temp directory.
+- Test data is generated by the app, not selected from personal source folders.
+- Kopia repository creation or connection fails closed on error.
+- Snapshot creation returns a snapshot ID.
+- Repository verification uses `kopia snapshot verify`.
+- Restore drill restores the canary file and compares SHA-256 checksums.
+- Failed restore or checksum mismatch maps to Critical.
+- Passwords are passed through environment variables, not CLI arguments.
+- UI/log output does not expose passwords, full local source paths, or raw tool logs.
 
-Click **Run mock backup**.
-
-**Expected:**
-- "Mock backup completed" success panel appears.
-- Snapshot ID is shown (not a secret).
-- File count and size are shown.
-- Log line is safe to display (no raw paths).
-
-### Test: Run mock repository verification (pass)
-
-Click **Mock check (pass)**.
-
-**Expected:** "Repository verification passed" message.
-
-### Test: Run mock repository verification (fail)
-
-Click **Mock check (fail)**.
-
-**Expected:** "Repository verification FAILED" message. Red failure indicator. Health level: Critical (if wired to health view).
-
----
-
-## Step 4: Validate Syncthing folder planning
+## Step 6: Validate Syncthing Transport Safety
 
 Navigate to **Syncthing Connection**.
 
-### Test: Repository path accepted
+Test:
 
-Default folder path `/home/user/.nasbb-repo` should already show as accepted:
+- Validate the encrypted repository path as a transport folder.
+- Validate a configured source folder.
+- Validate a subfolder of a source folder.
+- Validate an unrelated hosted peer-storage path.
 
-**Expected:** Green "Path accepted" panel.
+Expected:
 
-### Test: Source folder rejected
+- Repository and unrelated hosted storage paths are accepted when safe.
+- Source folders and source subfolders are rejected.
+- Generated config snippets redact folder paths and API keys.
+- No live Syncthing daemon is required for this validation step.
 
-In the "Validate a proposed folder path" input, enter `/home/user/documents` (a configured source folder).
+## Step 7: Verify Health Checks
 
-Click **Validate**.
+Navigate to **Health Checks** after running the generated-data lab.
 
-**Expected:** Red error: "Source folder path must not be used as a Syncthing folder."
+Expected:
 
-### Test: Subfolder of source also rejected
+- Backup age reflects the real timestamp from the test backup.
+- Repository verification reflects the actual `snapshot verify` result.
+- Restore drill age is `0` after a passing canary restore.
+- Restore drill age is `-1` after failure or mismatch.
+- Sync and peer checks may remain Critical in the test lab because no live Syncthing peer is running.
 
-Enter `/home/user/documents/subdir`.
+Important interpretation:
 
-**Expected:** Red error about source folder rejection.
+The test-lab health report can remain overall Critical even after successful local backup, verification, and restore because peer sync is intentionally absent. Treat that as a known pre-alpha limitation, not as proof that the Kopia path failed.
 
-### Test: Unrelated path accepted
-
-Enter `/mnt/peer-storage`.
-
-**Expected:** Green "Path accepted" panel.
-
-### Verify API plan redaction
-
-The Syncthing API plan shown should contain:
-- `[X-API-Key: REDACTED]` — never the actual API key.
-- `path=[REDACTED]` — never the actual folder path.
-
----
-
-## Step 5: Run mock restore drill
-
-Navigate to **Restore Drill**.
-
-### Test: Passing drill
-
-Click **Simulate pass** (sets both checksums to match), then **Run mock restore drill**.
-
-**Expected:** "Drill PASSED". Health level: OK. Audit evidence shows `result: pass`.
-
-### Test: Canary mismatch (Critical)
-
-Click **Simulate mismatch** (sets observed to all-zeros checksum), then run.
-
-**Expected:** "Drill FAILED — CANARY MISMATCH". Health level: Critical. Audit evidence includes "Preserve all logs" action.
-
-### Test: Restore failure (Critical)
-
-Click **Simulate failure (empty observed)** — sets observed checksum to empty, then run.
-
-**Expected:** "Drill FAILED". Health level: Critical. Audit evidence includes restore investigation action.
-
-This path intentionally leaves the observed checksum empty. The mock restore drill backend treats an empty observed checksum as a restore failure, so the failure must still reach the backend and update Health Checks.
-
----
-
-## Step 6: Verify health check thresholds
-
-Navigate to **Health Checks**.
-
-**Verify the following thresholds are displayed correctly:**
-
-| Check | Warning threshold | Critical threshold |
-|---|---|---|
-| Last backup age | > 24h | > 72h |
-| Last sync age | > 24h | > 72h |
-| Free quota | < 15% | < 5% |
-| Restore drill age | > 30 days | Never run / failed |
-| Peer offline | > 24h | > 7 days |
-| Repository verification | Tool warning | Verification failed |
-
-**With default mock state:**
-- Last backup: OK (2h ago).
-- Last sync: OK (1h ago).
-- Free quota: OK (65%).
-- Restore drill: Critical (never run — blocks Protected).
-- Peer offline: OK (online).
-- Repository verification: OK (passed).
-
-**Expected:** Overall health level = Critical (because drill never run).
-
-**Expected Protected gate:** 3–4 of 8 checks passing (snapshot exists, repo synced, quota has buffer, retention configured — but drill never run, no key confirmation in default state).
-
----
-
-## Step 7: Verify log redaction
+## Step 8: Verify Log Redaction
 
 Navigate to **Logs**.
 
-**Verify the redaction demo panel shows:**
-- Before/after pairs where source paths and passwords are replaced with `[REDACTED]`.
+Expected:
 
-**Verify the log stream shows only redacted lines.** No raw paths, passwords, or API keys should appear.
+- Redaction examples replace passwords, tokens, and paths with `[REDACTED]`.
+- Operation logs do not show `KOPIA_PASSWORD`.
+- Source paths and repository paths should not appear in reportable health output.
 
-Key examples to confirm:
-- `password=hunter2` → `password=[REDACTED]`
-- `/home/alice/documents` → `[REDACTED]`
-- Health summary lines pass through unchanged.
+## Safety Checklist
 
----
-
-## Step 8: Verify settings toggles
-
-Navigate to **Settings**.
-
-**Toggle mock/offline mode off and on.** Verify the banner on the Dashboard changes.
-
-**Toggle health reporting consent.** Verify the state summary updates.
-
-**Toggle recovery key confirmed.** Verify:
-- Dashboard "Recovery key saved externally" check flips.
-- Protected gate count changes.
-
----
-
-## Safety checks to verify manually
-
-Before calling a local test complete, confirm each of the following manually:
+Before calling a local test complete, confirm:
 
 - [ ] Source folders configured in the wizard never appear in Syncthing folder plans.
-- [ ] Repository path is always shown as `[REDACTED]` in Kopia command display.
-- [ ] Kopia password is never shown anywhere in the UI.
-- [ ] Syncthing API key is always shown as `[X-API-Key: REDACTED]`.
-- [ ] Mock restore drill with mismatched checksums returns health level `critical`.
-- [ ] Mock restore drill with empty observed checksum returns health level `critical`.
-- [ ] Storage Host role validation passes with no source or repository paths.
+- [ ] Repository paths are redacted in display commands and logs.
+- [ ] Kopia passwords never appear in CLI arguments, UI text, logs, or health reports.
+- [ ] Syncthing API keys are redacted.
+- [ ] Restore failure returns Critical.
+- [ ] Canary mismatch returns Critical.
+- [ ] Storage Host role validation passes without source or repository paths.
 - [ ] Data Owner role validation fails if source folders are empty.
-- [ ] Reciprocal Match role validation fails if either owner-side or host-side settings are missing.
+- [ ] Reciprocal Match role validation fails if owner-side or host-side settings are missing.
 - [ ] Health report consent defaults to off.
 
----
+## What Is Real Vs Still Pending
 
-## What is mock vs real
+| Feature | Current state |
+| --- | --- |
+| Config validation | Real Rust logic. |
+| Folder picker | Real Tauri dialog in desktop mode. |
+| Tool verification | Real SHA-256 verifier; current bundled checksums target macOS arm64. |
+| Kopia backup | Real generated-data test-lab execution. |
+| Repository verification | Real `kopia snapshot verify`. |
+| Restore drill | Real generated-data restore and canary SHA-256 compare. |
+| Syncthing transport safety | Real validation and redacted config generation. |
+| Syncthing daemon/API | Pending. |
+| Production scheduling | Pending. |
+| OS keychain | Pending. |
+| Web API pairing | Pending. |
+| Two-machine restore proof | Pending. |
 
-| Feature | Mock/offline | Real (not yet implemented) |
-|---|---|---|
-| Kopia command planning | ✅ Real Rust logic | Real execution: not yet |
-| Kopia/Syncthing tool verification | ✅ Real SHA-256 verifier and macOS arm64 manifest checksums | Other platform binaries/checksums: not yet |
-| Syncthing folder safety | ✅ Real Rust logic | Real execution: not yet |
-| Config validation | ✅ Real Rust logic | Production keychain: not yet |
-| Mock backup result | ✅ Mock JSON | Real kopia snapshot: not yet |
-| Mock repo check | ✅ Mock pass/fail | Real kopia check: not yet |
-| Mock restore drill | ✅ Real checksum compare logic | Real kopia restore: not yet |
-| Log redaction | ✅ Real Rust regex logic | Streaming from real tool: not yet |
-| Health thresholds | ✅ Real Rust threshold logic | Real health report from service: not yet |
-| Syncthing REST API | Planned (mock plan) | Real API calls: not yet |
-| OS keychain | Documented pattern | Real integration: not yet |
-| Web API pairing | Not implemented | Future phase 5 |
+## Do Not Claim Production Protection Until
 
----
-
-## Do not claim real backup protection until:
-
-1. A real Kopia binary is bundled and its checksum is verified against the manifest on every release platform.
-2. `kopia repository create`, `snapshot create`, and `snapshot verify` have been executed against a real repository.
-3. A real restore from a peer-held repository has succeeded with canary checksum match.
-4. Syncthing has replicated the encrypted repository to a second machine.
-5. Cargo checks pass on a Rust-enabled machine for the Tauri command layer and `nasbb-core` tests.
+1. A real Kopia binary is bundled and checksum-verified on every release platform.
+2. Production secrets are stored through OS keychain or an equivalent platform secret store.
+3. Scheduled backups run from selected source folders without exposing plaintext metadata.
+4. Syncthing replicates the encrypted repository to a second machine.
+5. A restore from the peer-held repository copy succeeds with matching canary checksum.
+6. Health reports remain allowlisted and redacted.
+7. Signed release artifacts, license files, checksums, and rollback notes are complete.

@@ -63,12 +63,19 @@ function HealthBadge({ level }: { level: string }) {
 }
 
 function ToolProbeCard({ probe }: { probe: ToolProbeResult }) {
-  const isReady = probe.status === 'ready' || probe.status === 'present';
+  const isReady = probe.status === 'ready';
+  const isPresent = probe.status === 'present';
+  const borderClass = isReady
+    ? 'border-emerald-800 bg-emerald-950/30'
+    : isPresent
+    ? 'border-amber-800 bg-amber-950/30'
+    : 'border-red-800 bg-red-950/30';
+  const statusColor = isReady ? 'text-emerald-400' : isPresent ? 'text-amber-400' : 'text-red-400';
   return (
-    <div className={`rounded border px-3 py-2 text-xs ${isReady ? 'border-emerald-800 bg-emerald-950/30' : 'border-red-800 bg-red-950/30'}`}>
+    <div className={`rounded border px-3 py-2 text-xs ${borderClass}`}>
       <div className="flex items-center justify-between mb-1">
         <span className="font-medium text-slate-200">{probe.name}</span>
-        <span className={`font-mono ${isReady ? 'text-emerald-400' : 'text-red-400'}`}>
+        <span className={`font-mono ${statusColor}`}>
           {probe.status}
         </span>
       </div>

@@ -28,14 +28,17 @@ export const DEFAULT_SETUP_STATE: ClientSetupState = {
   offline_mode: false,
 };
 
-// Honest initial health: no backup, no sync, no drill, no peer.
+// Honest initial health: nothing has run yet, peers not configured.
+// Negative values for sync/peer fields mean "not configured" — the health
+// thresholds treat these as Ok rather than Critical so a fresh install
+// doesn't immediately show an alarming health state.
 // Values update to real data after each operation via refreshRealHealth().
 export const DEFAULT_HEALTH_REPORT: HealthReport = {
-  last_backup_age_hours: 999.0,
-  last_sync_age_hours: 999.0,
+  last_backup_age_hours: 999.0,   // no backup yet → Critical (intentional, prompts action)
+  last_sync_age_hours: -1.0,      // Syncthing not configured → Ok
   free_quota_percent: 100.0,
-  restore_drill_age_days: -1,
-  peer_offline_hours: 999.0,
+  restore_drill_age_days: -1,     // never run → Critical (intentional, prompts action)
+  peer_offline_hours: -1.0,       // no peer configured → Ok
   repository_check_ok: false,
   repository_check_message: null,
 };

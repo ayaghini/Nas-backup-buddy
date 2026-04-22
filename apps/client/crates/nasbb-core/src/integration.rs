@@ -179,9 +179,13 @@ impl ClientSetupState {
             }
             KopiaRepositoryStatus::CheckFailed => {
                 blocking
-                    .push("Kopia repository check failed — investigate immediately".to_string());
+                    .push("Kopia repository verification failed — investigate immediately".to_string());
             }
             _ => {}
+        }
+
+        if !self.recovery_key_confirmed {
+            blocking.push("Recovery key backup has not been confirmed".to_string());
         }
 
         if self.syncthing_folder.state == SyncthingState::Error {
@@ -294,6 +298,16 @@ mod tests {
         let mut state = mock_ready_state();
         state.offline_mode = false;
         state.kopia_tool_status = ToolStatus::Missing;
+        let result = state.check_readiness();
+        assert_eq!(result.readiness, SetupReadiness::Blocked);
+        assert!(result.blocking_reasons.iter().any(|r| r.contains("Kopia")));
+    }
+
+    #[test]
+    fn blocked_when_kopia_tool_present_in_production_mode() {
+        let mut state = mock_ready_state();
+        state.offline_mode = false;
+        state.kopia_tool_status = ToolStatus::Present;
         let result = state.check_readiness();
         assert_eq!(result.readiness, SetupReadiness::Blocked);
         assert!(result.blocking_reasons.iter().any(|r| r.contains("Kopia")));
