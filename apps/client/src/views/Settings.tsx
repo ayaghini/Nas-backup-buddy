@@ -41,7 +41,7 @@ function installMethods(platform: string): InstallMethod[] {
     return [
       {
         label: 'winget (recommended)',
-        command: 'winget install Kopia.Kopia',
+        command: 'winget install Kopia.KopiaCLI --scope user',
         description: 'Windows Package Manager — built into Windows 10 (1809+) and Windows 11.',
       },
       {
@@ -167,7 +167,7 @@ function KopiaInstallHelper({ platform }: { platform: string }) {
 
 export function SettingsView() {
   const navigate = useNavigate();
-  const { offlineMode, healthReportConsent, recoveryKeyConfirmed, toolStatus,
+  const { offlineMode, healthReportConsent, masterPasswordSet, toolStatus,
     setOfflineMode, setHealthReportConsent } = useApp();
 
   const [platform, setPlatform] = useState('');
@@ -234,22 +234,22 @@ export function SettingsView() {
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
         <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Master Encryption Password</h3>
         <div className={`flex items-center justify-between p-3 rounded-lg border ${
-          recoveryKeyConfirmed
+          masterPasswordSet
             ? 'border-emerald-800/40 bg-emerald-500/5'
             : 'border-amber-700/40 bg-amber-500/5'
         }`}>
           <div className="flex items-center gap-2.5">
-            {recoveryKeyConfirmed
+            {masterPasswordSet
               ? <ShieldCheck size={15} className="text-emerald-400 flex-shrink-0" />
               : <ShieldAlert size={15} className="text-amber-400 flex-shrink-0" />}
             <div>
-              <div className={`text-sm font-medium ${recoveryKeyConfirmed ? 'text-emerald-300' : 'text-amber-300'}`}>
-                {recoveryKeyConfirmed ? 'Confirmed — saved externally' : 'Not confirmed — action required'}
+              <div className={`text-sm font-medium ${masterPasswordSet ? 'text-emerald-300' : 'text-amber-300'}`}>
+                {masterPasswordSet ? 'Set — loaded from OS keychain' : 'Not set — action required'}
               </div>
               <div className="text-xs text-slate-500 mt-0.5">
-                {recoveryKeyConfirmed
-                  ? 'Loaded from OS keychain. External copy confirmed.'
-                  : 'Set the password and confirm it is saved outside this device.'}
+                {masterPasswordSet
+                  ? 'Auto-loaded on every app start. Remember to keep an off-device copy.'
+                  : 'Set the master password in the Recovery Key tab before running backups.'}
               </div>
             </div>
           </div>
@@ -258,7 +258,7 @@ export function SettingsView() {
             className="flex items-center gap-0.5 text-xs text-sky-400 hover:text-sky-300 whitespace-nowrap flex-shrink-0 ml-3"
           >
             <KeyRound size={12} />
-            {recoveryKeyConfirmed ? 'Manage' : 'Set up'}
+            {masterPasswordSet ? 'Manage' : 'Set up'}
             <ChevronRight size={11} />
           </button>
         </div>
@@ -307,7 +307,7 @@ export function SettingsView() {
         {[
           { label: 'Offline mode', value: offlineMode },
           { label: 'Health reporting', value: healthReportConsent },
-          { label: 'Recovery key confirmed', value: recoveryKeyConfirmed },
+          { label: 'Master password set', value: masterPasswordSet },
         ].map(({ label, value }: { label: string; value: boolean }) => (
           <div key={label} className="flex items-center justify-between text-sm">
             <span className="text-slate-400">{label}</span>

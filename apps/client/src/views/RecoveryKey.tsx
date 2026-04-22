@@ -265,11 +265,11 @@ function ChangePasswordForm({ onDone, onCancel }: { onDone: () => void; onCancel
 // ── Main view ─────────────────────────────────────────────────────────────────
 
 export function RecoveryKey() {
-  const { recoveryKeyConfirmed, setRecoveryKeyConfirmed, setMasterPasswordSet, masterPasswordSet } = useApp();
+  const { setMasterPasswordSet, masterPasswordSet } = useApp();
 
   const [mode, setMode] = useState<'idle' | 'set' | 'change' | 'revoke'>('idle');
   const [keychainPresent, setKeychainPresent] = useState(false);
-  const [autoLoaded, setAutoLoaded] = useState(false);
+  const [keychainBlockedByAcl, setKeychainBlockedByAcl] = useState(false);
   const [checkingKeychain, setCheckingKeychain] = useState(true);
   const [revokeConfirm, setRevokeConfirm] = useState('');
   const [revokeError, setRevokeError] = useState<string | null>(null);
@@ -278,13 +278,21 @@ export function RecoveryKey() {
     async function init() {
       try {
         // Try auto-loading from keychain — if found, marks masterPasswordSet in context
-        const loaded = await loadMasterPasswordFromKeychain();
-        if (loaded) {
-          setMasterPasswordSet(true);
-          setAutoLoaded(true);
-        }
+        // Check existence first (metadata-only, no dialog) then try to load.
         const inKeychain = await hasPasswordInKeychain();
         setKeychainPresent(inKeychain);
+
+        if (inKeychain) {
+          const loaded = await loadMasterPasswordFromKeychain();
+          if (loaded) {
+            setMasterPasswordSet(true);
+          } else {
+            // Entry exists but reading it failed (old ACL-restricted item,
+            // user cancelled the macOS dialog, or keychain locked).
+            // We did NOT delete the entry — user decides what to do.
+            setKeychainBlockedByAcl(true);
+          }
+        }
       } finally {
         setCheckingKeychain(false);
       }
@@ -298,7 +306,7 @@ export function RecoveryKey() {
       await clearMasterPassword();
       setMasterPasswordSet(false);
       setKeychainPresent(false);
-      setAutoLoaded(false);
+      setKeychainBlockedByAcl(false);
       setMode('idle');
       setRevokeConfirm('');
     } catch (e: unknown) {
@@ -306,7 +314,7 @@ export function RecoveryKey() {
     }
   }
 
-  const allDone = masterPasswordSet && recoveryKeyConfirmed;
+  const allDone = masterPasswordSet;
 
   return (
     <div className="p-6 space-y-6 max-w-xl">
@@ -316,6 +324,27 @@ export function RecoveryKey() {
       </div>
 
       {/* Status banner */}
+      {keychainBlockedByAcl && !masterPasswordSet && (
+        <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-500/20 bg-amber-500/5">
+          <AlertTriangle size={15} className="text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className="space-y-2">
+            <div className="text-sm font-medium text-amber-300">Stored password couldn't be loaded</div>
+            <div className="text-xs text-slate-400 leading-relaxed">
+              Your password is saved in the keychain but this build of the app doesn't have
+              permission to read it automatically. This happens when the app was updated or rebuilt.
+            </div>
+            <div className="text-xs text-slate-400 leading-relaxed">
+              <strong className="text-slate-300">Re-enter your backup password below.</strong>{' '}
+              This replaces the old keychain entry with one that works across all app builds —
+              you won't be prompted again.
+            </div>
+            <div className="text-xs text-amber-400/60">
+              Your password entry has NOT been deleted. It is still in your keychain.
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className={`flex items-start gap-3 p-3 rounded-lg border ${
         allDone
           ? 'border-emerald-500/30 bg-emerald-500/5'
@@ -326,18 +355,14 @@ export function RecoveryKey() {
           : <ShieldAlert size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />}
         <div>
           <div className={`text-sm font-medium ${allDone ? 'text-emerald-300' : 'text-amber-300'}`}>
-            {allDone
-              ? 'Master password confirmed — all backup operations unlocked.'
-              : masterPasswordSet
-                ? 'Password set — confirm external backup below to complete setup.'
-                : 'Master password not set — backups cannot run until this is done.'}
+            {masterPasswordSet
+              ? 'Master password set — all backup operations unlocked.'
+              : 'Master password not set — backups cannot run until this is done.'}
           </div>
           <div className="text-xs mt-0.5 text-slate-400">
             {masterPasswordSet
-              ? autoLoaded
-                ? 'Loaded automatically from OS keychain — no action needed.'
-                : 'Held in process memory and OS keychain for this and future sessions.'
-              : 'Set it once. Kopia uses it for all repositories. It will be remembered in the OS keychain.'}
+              ? 'Held in process memory and OS keychain. Auto-loaded on every app start — no re-entry needed.'
+              : 'Set it once. Kopia uses it for all repositories. It is stored in the OS keychain and auto-loaded on every restart.'}
           </div>
         </div>
       </div>
@@ -436,63 +461,30 @@ export function RecoveryKey() {
         </div>
       )}
 
-      {/* ── Confirm external save ────────────────────────────────────────── */}
-      <div className={`bg-slate-900 border rounded-lg p-4 space-y-4 ${
-        recoveryKeyConfirmed ? 'border-emerald-800/40' : 'border-slate-800'
-      } ${!masterPasswordSet ? 'opacity-50 pointer-events-none' : ''}`}>
-        <div className="flex items-center gap-2">
-          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
-            recoveryKeyConfirmed ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-slate-400'
-          }`}>
-            {recoveryKeyConfirmed ? '✓' : '2'}
+      {/* ── Off-device backup reminder ───────────────────────────────────── */}
+      {masterPasswordSet && (
+        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
+          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+            Also save your password outside this device
+          </h3>
+          <div className="flex items-start gap-2 p-2.5 rounded border border-amber-500/20 bg-amber-500/5 text-xs text-amber-300/80">
+            <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
+            <span>The OS keychain is tied to this device. If it is lost or wiped, the keychain is gone — your encrypted backups become unrecoverable without an off-device copy.</span>
           </div>
-          <h3 className="text-sm font-medium text-slate-200">Confirm you've saved the password externally</h3>
-        </div>
-
-        {!masterPasswordSet && <p className="text-xs text-slate-500">Set the master password above first.</p>}
-
-        {masterPasswordSet && (
-          <>
-            <div className="bg-slate-800/40 border border-slate-700/60 rounded p-3 space-y-2 text-xs">
-              <div className="font-medium text-slate-300 mb-2">Also save your password outside this device:</div>
-              {[
-                { icon: '🔑', label: 'Password manager', desc: '1Password, Bitwarden, LastPass, Apple Keychain — safest option.' },
-                { icon: '📄', label: 'Printed paper copy', desc: 'Written down in a locked drawer or safe, away from this device.' },
-                { icon: '🔒', label: 'Encrypted USB drive', desc: 'A separate encrypted drive stored off-site.' },
-              ].map(({ icon, label, desc }) => (
-                <div key={label} className="flex items-start gap-2 text-slate-400">
-                  <span className="flex-shrink-0">{icon}</span>
-                  <span><strong className="text-slate-300">{label}</strong> — {desc}</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex items-start gap-2 p-2.5 rounded border border-red-500/20 bg-red-500/5 text-xs text-red-400/80">
-              <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
-              <span><strong>Do not</strong> rely only on the OS keychain. If this device is lost or wiped, the keychain is gone too — you need an off-device copy.</span>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setRecoveryKeyConfirmed(!recoveryKeyConfirmed)}
-              className={`w-full flex items-start gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors ${
-                recoveryKeyConfirmed
-                  ? 'border-emerald-500/40 bg-emerald-500/10'
-                  : 'border-slate-700 bg-slate-800/30 hover:border-slate-600'
-              }`}
-            >
-              <div className={`w-4 h-4 rounded border flex-shrink-0 mt-0.5 flex items-center justify-center ${
-                recoveryKeyConfirmed ? 'bg-emerald-500 border-emerald-500' : 'border-slate-600'
-              }`}>
-                {recoveryKeyConfirmed && <CheckCircle size={10} className="text-white" />}
+          <div className="space-y-1.5 text-xs">
+            {[
+              { icon: '🔑', label: 'Password manager', desc: '1Password, Bitwarden, LastPass — safest option.' },
+              { icon: '📄', label: 'Printed paper copy', desc: 'Written down and stored in a locked drawer or safe, off this device.' },
+              { icon: '🔒', label: 'Encrypted USB drive', desc: 'A separate encrypted drive stored off-site.' },
+            ].map(({ icon, label, desc }) => (
+              <div key={label} className="flex items-start gap-2 text-slate-400">
+                <span className="flex-shrink-0">{icon}</span>
+                <span><strong className="text-slate-300">{label}</strong> — {desc}</span>
               </div>
-              <span className={`text-sm leading-snug ${recoveryKeyConfirmed ? 'text-emerald-300' : 'text-slate-400'}`}>
-                I have saved this password in a password manager or other secure location outside this device.
-              </span>
-            </button>
-          </>
-        )}
-      </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Why this matters ─────────────────────────────────────────────── */}
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-2">

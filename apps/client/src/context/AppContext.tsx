@@ -124,7 +124,24 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   // On mount: restore persisted configuration from disk
   useEffect(() => {
     loadPersistedConfig().then(saved => {
-      if (saved.wizardConfigs?.length) setWizardConfigs(saved.wizardConfigs);
+      if (saved.wizardConfigs?.length) {
+        setWizardConfigs(saved.wizardConfigs);
+        // Derive setup state from the last wizard config so the readiness
+        // check doesn't show "Kopia repository not configured" on restart.
+        const last = saved.wizardConfigs[saved.wizardConfigs.length - 1];
+        if (last?.repository_path) {
+          setSetupState(prev => ({
+            ...prev,
+            role: last.role,
+            kopia_repository: {
+              ...prev.kopia_repository,
+              status: prev.kopia_repository.status === 'not_configured'
+                ? 'configured'
+                : prev.kopia_repository.status,
+            },
+          }));
+        }
+      }
       if (saved.recoveryKeyConfirmed) setRecoveryKeyConfirmed(saved.recoveryKeyConfirmed);
       if (saved.healthReportConsent) setHealthReportConsent(saved.healthReportConsent);
       if (saved.offlineMode) setOfflineMode(saved.offlineMode);
@@ -172,6 +189,13 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
 
   const setMasterPasswordSet = useCallback((v: boolean) => {
     setMasterPasswordSetState(v);
+    // Password set implies the user has it and we consider it confirmed.
+    // The separate checkbox is removed — masterPasswordSet IS the confirmation.
+    if (v) {
+      setRecoveryKeyConfirmed(true);
+      setSetupState(prev => ({ ...prev, recovery_key_confirmed: true }));
+      void savePersistedConfig({ recoveryKeyConfirmed: true });
+    }
   }, []);
 
   const triggerRepoBackup = useCallback(async (configIndex: number) => {

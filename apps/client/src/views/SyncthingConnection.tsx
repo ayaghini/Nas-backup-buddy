@@ -10,7 +10,11 @@ import type {
   SyncPeer, SyncthingFolderStatus, SyncthingRunStatus,
 } from '../lib/types';
 import { syncthingStateLabel } from '../lib/mock-state';
-import { ensureSyncthingRunning } from '../lib/tauri-bridge';
+import {
+  type ApplySyncthingResult,
+  applySyncthingSetup,
+  ensureSyncthingRunning,
+} from '../lib/tauri-bridge';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -751,6 +755,10 @@ function ReviewStep({
   syncStatus: SyncthingRunStatus | null;
   onBack: () => void;
 }) {
+  const [applying, setApplying] = useState(false);
+  const [result, setResult] = useState<ApplySyncthingResult | null>(null);
+  const [applyError, setApplyError] = useState<string | null>(null);
+
   const activeAssignments = assignments.filter(a => a.mode !== 'off');
 
   const encryptedPasswordsOk = activeAssignments
@@ -758,14 +766,44 @@ function ReviewStep({
     .every(a => a.encryption_password.length >= 8);
 
   const warnings: string[] = [];
-  if (!encryptedPasswordsOk) warnings.push('Some encrypted-mode assignments have no password or a password shorter than 8 characters.');
+  if (!encryptedPasswordsOk)
+    warnings.push('Some encrypted-mode assignments have no password or a password shorter than 8 characters.');
+  if (!syncStatus?.is_running)
+    warnings.push('Syncthing daemon is not running — go back to step 1 and start it first.');
+
+  async function handleApply() {
+    setApplying(true);
+    setApplyError(null);
+    setResult(null);
+    try {
+      const r = await applySyncthingSetup(
+        peers.map(p => ({ id: p.id, name: p.name, device_id: p.device_id })),
+        activeAssignments.map(a => {
+          const folder = folders.find(f => f.folder_id === a.folder_id);
+          return {
+            folder_id: a.folder_id,
+            folder_path: folder?.path ?? '',
+            label: folder?.label ?? a.folder_id,
+            peer_id: a.peer_id,
+            mode: a.mode,
+            encryption_password: a.encryption_password,
+          };
+        }),
+      );
+      setResult(r);
+    } catch (e: unknown) {
+      setApplyError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setApplying(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
       <div>
         <h2 className="text-sm font-semibold text-slate-200">Review & Apply</h2>
         <p className="text-xs text-slate-500 mt-0.5">
-          Review the configuration below, then apply it via the Syncthing REST API.
+          Review the configuration below, then apply it to the running Syncthing daemon.
         </p>
       </div>
 
@@ -776,7 +814,7 @@ function ReviewStep({
         </div>
       ))}
 
-      {/* Devices to add */}
+      {/* Devices to register */}
       <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
         <div className="px-3 py-2 border-b border-slate-800 text-xs font-semibold text-slate-400 uppercase tracking-wide">
           Devices to register ({peers.length})
@@ -785,11 +823,13 @@ function ReviewStep({
           {peers.map(peer => (
             <div key={peer.id} className="px-3 py-2.5 flex items-center gap-2">
               <Users size={12} className="text-sky-400 flex-shrink-0" />
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <span className="text-xs font-medium text-slate-200">{peer.name}</span>
-                <code className="text-xs text-slate-500 ml-2">{peer.device_id}</code>
+                <code className="text-xs text-slate-500 ml-2 truncate">{peer.device_id}</code>
               </div>
-              <code className="text-xs text-slate-600">POST /rest/config/devices</code>
+              {result && result.devices_added.includes(peer.name) && (
+                <CheckCircle size={12} className="text-emerald-400 flex-shrink-0" />
+              )}
             </div>
           ))}
         </div>
@@ -804,12 +844,13 @@ function ReviewStep({
           {folders.map(folder => {
             const folderAssignments = activeAssignments.filter(a => a.folder_id === folder.folder_id);
             if (folderAssignments.length === 0) return null;
+            const folderDone = result?.folders_configured.includes(folder.label);
             return (
               <div key={folder.folder_id} className="px-3 py-2.5 space-y-1">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-slate-200">
                   <FolderOpen size={12} className="text-sky-400" />
                   {folder.label}
-                  <code className="text-slate-600 ml-1">{folder.folder_id}</code>
+                  {folderDone && <CheckCircle size={11} className="text-emerald-400 ml-1" />}
                 </div>
                 {folderAssignments.map(a => {
                   const peer = peers.find(p => p.id === a.peer_id);
@@ -818,9 +859,8 @@ function ReviewStep({
                       <span className="text-slate-600">→</span>
                       <span>{peer?.name}</span>
                       {a.mode === 'encrypted'
-                        ? <span className="flex items-center gap-1 text-violet-400"><Lock size={10} /> Encrypted folder</span>
+                        ? <span className="flex items-center gap-1 text-violet-400"><Lock size={10} /> Encrypted</span>
                         : <span className="text-sky-400">Sync</span>}
-                      <code className="text-slate-600 ml-auto">POST /rest/config/folders</code>
                     </div>
                   );
                 })}
@@ -831,36 +871,86 @@ function ReviewStep({
       </div>
 
       {/* API key note */}
-      <div className="text-xs text-slate-600 flex items-center gap-1.5">
+      <p className="text-xs text-slate-600 flex items-center gap-1.5">
         <Lock size={10} />
-        API key read from OS keychain at call time — never logged or displayed.
-      </div>
+        API key read from Syncthing's config.xml at call time — never logged or returned.
+      </p>
+
+      {/* Apply result */}
+      {result && (
+        <div className={`p-3 rounded border text-xs space-y-1 ${
+          result.errors.length > 0
+            ? 'border-amber-500/20 bg-amber-500/5'
+            : 'border-emerald-500/20 bg-emerald-500/5'
+        }`}>
+          {result.errors.length === 0 ? (
+            <div className="flex items-center gap-2 text-emerald-300 font-medium">
+              <CheckCircle size={13} />
+              Configuration applied to Syncthing.
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-amber-300 font-medium">
+              <AlertTriangle size={13} />
+              Applied with warnings — check errors below.
+            </div>
+          )}
+          {result.devices_added.length > 0 && (
+            <p className="text-slate-400">Devices added: {result.devices_added.join(', ')}</p>
+          )}
+          {result.folders_configured.length > 0 && (
+            <p className="text-slate-400">Folders configured: {result.folders_configured.join(', ')}</p>
+          )}
+          {result.errors.map((e, i) => (
+            <p key={i} className="text-amber-400">{e}</p>
+          ))}
+          {result.errors.length === 0 && (
+            <p className="text-slate-500 mt-1">
+              Syncthing will now attempt to connect to your peers. Open the web UI to monitor connection status.
+            </p>
+          )}
+        </div>
+      )}
+
+      {applyError && (
+        <div className="flex items-start gap-2 p-3 rounded border border-red-500/20 bg-red-500/5 text-xs text-red-300">
+          <XCircle size={13} className="flex-shrink-0 mt-0.5" />
+          <div>
+            <div className="font-medium mb-0.5">Failed to apply configuration</div>
+            <span>{applyError}</span>
+          </div>
+        </div>
+      )}
 
       <div className="flex justify-between items-center">
-        <button onClick={onBack} className="px-4 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors">
+        <button
+          onClick={onBack}
+          disabled={applying}
+          className="px-4 py-1.5 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-40 transition-colors"
+        >
           Back
         </button>
         <div className="flex gap-2">
-          {syncStatus?.is_running ? (
+          {syncStatus?.is_running && (
             <a
               href={syncStatus.web_ui_url}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs rounded transition-colors"
             >
               <ExternalLink size={11} />
               Open web UI
             </a>
-          ) : null}
+          )}
           <button
-            disabled={warnings.length > 0}
-            className="px-4 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs rounded transition-colors"
-            onClick={() => {
-              // Future: call Tauri commands to apply config via Syncthing API
-              alert('Apply via Syncthing API — backend integration coming next.');
-            }}
+            onClick={handleApply}
+            disabled={applying || warnings.length > 0}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs rounded transition-colors"
           >
-            Apply Configuration
+            {applying
+              ? <><Loader2 size={11} className="animate-spin" /> Applying…</>
+              : result
+                ? 'Apply Again'
+                : 'Apply Configuration'}
           </button>
         </div>
       </div>

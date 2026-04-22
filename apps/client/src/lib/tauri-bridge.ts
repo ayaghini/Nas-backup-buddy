@@ -242,7 +242,6 @@ export async function getSetupReadiness(state: ClientSetupState): Promise<Integr
     if (state.syncthing_tool_status !== 'ready') blocking.push(`Syncthing tool not ready: ${state.syncthing_tool_status}`);
     if (state.kopia_repository.status === 'not_configured') blocking.push('Kopia repository not configured');
     if (state.kopia_repository.status === 'check_failed') blocking.push('Kopia repository verification failed — investigate immediately');
-    if (!state.recovery_key_confirmed) blocking.push('Recovery key/password backup not confirmed');
     if (state.syncthing_folder.state === 'error') blocking.push('Syncthing error — check Syncthing logs');
 
     if (state.syncthing_folder.state === 'stale') warnings.push('Syncthing folder is stale — peer data may be outdated');
@@ -406,6 +405,39 @@ export async function stopSyncthing(): Promise<void> {
   try {
     await invoke<void>('stop_syncthing');
   } catch { /* no-op */ }
+}
+
+// ── Syncthing wizard apply ────────────────────────────────────────────────────
+
+export interface ApplySyncthingPeer {
+  id: string;
+  name: string;
+  device_id: string;
+}
+
+export interface ApplySyncthingAssignment {
+  folder_id: string;
+  folder_path: string;
+  label: string;
+  peer_id: string;
+  mode: string;
+  encryption_password: string;
+}
+
+export interface ApplySyncthingResult {
+  devices_added: string[];
+  folders_configured: string[];
+  errors: string[];
+  web_ui_url: string;
+}
+
+/// Apply the full Syncthing wizard config: register devices, add/update folders,
+/// and set per-device encryption passwords where mode === 'encrypted'.
+export async function applySyncthingSetup(
+  peers: ApplySyncthingPeer[],
+  assignments: ApplySyncthingAssignment[],
+): Promise<ApplySyncthingResult> {
+  return invoke<ApplySyncthingResult>('apply_syncthing_setup', { peers, assignments });
 }
 
 /// Return the current compile-time platform string, e.g. "x86_64-pc-windows-msvc".

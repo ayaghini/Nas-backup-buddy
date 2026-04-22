@@ -183,9 +183,7 @@ impl ClientSetupState {
             }
             _ => {}
         }
-        if !self.recovery_key_confirmed {
-            blocking.push("Recovery key/password backup not confirmed".to_string());
-        }
+
         if self.syncthing_folder.state == SyncthingState::Error {
             blocking.push("Syncthing error — check Syncthing logs".to_string());
         }

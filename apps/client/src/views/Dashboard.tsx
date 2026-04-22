@@ -64,7 +64,7 @@ function actionForReason(reason: string): { to: string; label: string } | null {
 
 export function Dashboard() {
   const navigate = useNavigate();
-  const { setupState, readiness, offlineMode, toolStatus, realLab, wizardConfig, masterPasswordSet } = useApp();
+  const { setupState, readiness, offlineMode, toolStatus, realLab, masterPasswordSet, wizardConfig } = useApp();
   const repo = setupState.kopia_repository;
   const sync = setupState.syncthing_folder;
   const drillPassed = realLab.drill?.result === 'pass';
@@ -81,7 +81,7 @@ export function Dashboard() {
     { done: repo.status === 'check_passed', label: 'Repository verification passed' },
     { done: sync.state !== 'not_configured', label: 'Syncthing folder configured' },
     { done: sync.state === 'in_sync', label: 'Repository synced to peer' },
-    { done: setupState.recovery_key_confirmed, label: 'Recovery key saved externally' },
+    { done: masterPasswordSet, label: 'Master encryption password set' },
     { done: drillPassed, label: 'Restore drill completed' },
   ];
 

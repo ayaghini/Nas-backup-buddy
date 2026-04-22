@@ -139,6 +139,43 @@ pub struct SyncthingFolderResult {
     pub note: String,
 }
 
+// ── Syncthing wizard apply types ──────────────────────────────────────────────
+
+/// One peer device to register in Syncthing.
+#[derive(Debug, Deserialize)]
+pub struct ApplySyncthingPeer {
+    /// Local app-assigned UUID — used to match assignments.
+    pub id: String,
+    /// Human-readable name shown in Syncthing.
+    pub name: String,
+    /// Syncthing device ID (uppercase, 8×7 chars separated by hyphens).
+    pub device_id: String,
+}
+
+/// One folder–peer assignment from the wizard.
+#[derive(Debug, Deserialize)]
+pub struct ApplySyncthingAssignment {
+    pub folder_id: String,
+    /// Encrypted repository path — internal use only, never logged.
+    pub folder_path: String,
+    pub label: String,
+    /// Matches ApplySyncthingPeer.id.
+    pub peer_id: String,
+    /// "sync" or "encrypted".
+    pub mode: String,
+    /// Only meaningful when mode == "encrypted". Never logged.
+    pub encryption_password: String,
+}
+
+/// Result returned to the frontend after applying the Syncthing configuration.
+#[derive(Debug, Serialize)]
+pub struct ApplySyncthingResult {
+    pub devices_added: Vec<String>,
+    pub folders_configured: Vec<String>,
+    pub errors: Vec<String>,
+    pub web_ui_url: String,
+}
+
 // ── Test lab runtime state (stored between commands) ─────────────────────────
 
 struct TestLabStateInner {
@@ -172,6 +209,178 @@ struct KopiaPasswordState(Mutex<Option<String>>);
 // Keychain identifiers — fixed strings that identify this app's credential entry.
 const KEYCHAIN_SERVICE: &str = "nasbb.backup-buddy";
 const KEYCHAIN_ACCOUNT: &str = "master-password";
+
+// ── Platform-specific keychain helpers ───────────────────────────────────────
+//
+// macOS uses the `security` CLI (not the `keyring` crate).
+//
+// Why not `keyring`: it calls SecKeychainAddGenericPassword which binds the ACL to the
+// creating binary's code signature. Every `cargo build` changes the binary signature, so
+// every restart triggers the macOS "enter login keychain password" dialog. That dialog
+// wants the macOS ACCOUNT password, not the backup password — users are confused.
+//
+// Why NOT `-T ""`: the security(1) man page states "If the -T option is not provided,
+// any application can access the item." Passing -T with any value (including an empty
+// string) restricts access to the listed application(s). Omitting -T entirely is
+// the correct way to create an unrestricted item.
+//
+// Store strategy: delete-then-add (never update-in-place).
+//   Updating an existing ACL-restricted item requires reading its ACL first, which
+//   triggers the confirm dialog. Deleting by metadata does NOT read the secret value,
+//   so kSecACLAuthorizationDecrypt is never invoked — no dialog, even for items created
+//   by the old `keyring` code.
+//
+// Retrieve strategy: try silently; on any non-"not found" failure return None WITHOUT
+//   deleting the entry. We never destroy the user's credential automatically.
+//   The UI detects "entry exists but couldn't be read" and lets the user decide:
+//   re-enter (which migrates to the correct format) or retry.
+//
+// Existence check: uses `find-generic-password` WITHOUT `-w`. Reading metadata does
+//   NOT invoke kSecACLAuthorizationDecrypt, so no dialog ever appears for this check.
+//
+// Windows / Linux: `keyring` crate works correctly on those platforms.
+
+/// macOS: check if the keychain entry exists using metadata-only lookup.
+/// Does NOT read the secret value → no ACL dialog, regardless of how the item was stored.
+#[cfg(target_os = "macos")]
+fn macos_entry_exists() -> bool {
+    std::process::Command::new("security")
+        .args(["find-generic-password",
+               "-s", KEYCHAIN_SERVICE,
+               "-a", KEYCHAIN_ACCOUNT])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// macOS: delete the entry by metadata.
+/// Deletion does NOT read the secret value (kSecACLAuthorizationDecrypt is not invoked),
+/// so no ACL confirm dialog appears even for ACL-restricted items.
+#[cfg(target_os = "macos")]
+fn macos_delete_entry() {
+    let _ = std::process::Command::new("security")
+        .args(["delete-generic-password",
+               "-s", KEYCHAIN_SERVICE,
+               "-a", KEYCHAIN_ACCOUNT])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Store the password in the OS keychain.
+///
+/// macOS: always deletes any existing entry first (no dialog), then adds a fresh one
+/// with no -T flag (= any application can access, per security(1) man page).
+/// This silently migrates old keyring-created ACL-restricted items on first write.
+fn keychain_store(password: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        // Delete first: works without ACL dialog; silently no-ops if item absent.
+        macos_delete_entry();
+
+        // Add WITHOUT any -T flag.
+        // man security(1): "If the -T option is not provided, any application can
+        // access the item." This means no confirm dialog, ever, for any binary.
+        let out = std::process::Command::new("security")
+            .args(["add-generic-password",
+                   "-s", KEYCHAIN_SERVICE,
+                   "-a", KEYCHAIN_ACCOUNT,
+                   "-w", password])
+            .output()
+            .map_err(|e| format!("security CLI unavailable: {e}"))?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            return Err(format!("Keychain write failed: {}", stderr.trim()));
+        }
+        return Ok(());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
+            .map_err(|e| format!("keychain unavailable: {e}"))?;
+        entry.set_password(password)
+            .map_err(|e| format!("keychain write failed: {e}"))
+    }
+}
+
+/// Retrieve the password from the OS keychain. Returns Ok(None) if absent or unreadable.
+///
+/// macOS: if an old ACL-restricted entry exists the dialog may appear. If it does and
+/// the user cancels or enters the wrong macOS password, we return Ok(None) WITHOUT
+/// deleting the entry — that is the user's data and we must not destroy it silently.
+/// The UI will show "entry exists but couldn't be loaded" and let the user choose:
+/// re-enter the password (which migrates the entry to the correct format) or retry.
+fn keychain_retrieve() -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("security")
+            .args(["find-generic-password", "-w",
+                   "-s", KEYCHAIN_SERVICE,
+                   "-a", KEYCHAIN_ACCOUNT])
+            .output()
+            .map_err(|e| format!("security CLI unavailable: {e}"))?;
+
+        if out.status.success() {
+            let pw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            return Ok(if pw.is_empty() { None } else { Some(pw) });
+        }
+
+        // Exit 44 = errSecItemNotFound
+        if out.status.code() == Some(44) {
+            return Ok(None);
+        }
+
+        // Any other failure (ACL dialog cancelled, wrong macOS password, keychain
+        // locked): return None WITHOUT deleting. The caller checks has_entry_without_read()
+        // separately to decide what to show the user.
+        return Ok(None);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
+            .map_err(|e| format!("keychain unavailable: {e}"))?;
+        match entry.get_password() {
+            Ok(pw) if !pw.is_empty() => Ok(Some(pw)),
+            Ok(_) => Ok(None),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(format!("keychain read failed: {e}")),
+        }
+    }
+}
+
+/// Delete the password from the OS keychain.
+/// Silently succeeds if the entry does not exist.
+fn keychain_delete() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("security")
+            .args(["delete-generic-password",
+                   "-s", KEYCHAIN_SERVICE,
+                   "-a", KEYCHAIN_ACCOUNT])
+            .output()
+            .map_err(|e| format!("security CLI unavailable: {e}"))?;
+        if out.status.success() || out.status.code() == Some(44) {
+            return Ok(());
+        }
+        return Err(format!(
+            "Keychain delete failed (exit {}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Ok(entry) = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => {}
+                Err(e) => return Err(format!("keychain delete failed: {e}")),
+            }
+        }
+        Ok(())
+    }
+}
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
 
@@ -1266,6 +1475,217 @@ fn add_syncthing_folder(
     })
 }
 
+/// Read the Syncthing GUI/REST API key from config.xml in the Syncthing home directory.
+/// The key is stored in plaintext in `<gui><apikey>VALUE</apikey></gui>`.
+fn read_syncthing_api_key(syncthing_home: &std::path::Path) -> Result<String, String> {
+    let config_path = syncthing_home.join("config.xml");
+    let content = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("Cannot read Syncthing config.xml: {e}"))?;
+    let start = content
+        .find("<apikey>")
+        .ok_or("API key element not found in Syncthing config.xml")?;
+    let after_open = start + 8; // len("<apikey>")
+    let end = content[after_open..]
+        .find("</apikey>")
+        .ok_or("API key closing tag not found in Syncthing config.xml")?;
+    let key = content[after_open..after_open + end].trim().to_string();
+    if key.is_empty() {
+        return Err("Empty API key in Syncthing config.xml".to_string());
+    }
+    Ok(key)
+}
+
+/// Apply devices, folders, and peer assignments via the Syncthing REST API.
+///
+/// Flow:
+/// 1. Read API key from Syncthing's config.xml.
+/// 2. GET /rest/config to read current config.
+/// 3. Merge in new devices (skip duplicates by deviceID).
+/// 4. Merge in new folders (skip duplicates by folder ID); attach device shares
+///    with optional per-device encryption passwords.
+/// 5. PUT /rest/config to apply atomically.
+///
+/// Folder paths and encryption passwords are never logged or included in error messages.
+#[tauri::command]
+fn apply_syncthing_setup(
+    app: tauri::AppHandle,
+    peers: Vec<ApplySyncthingPeer>,
+    assignments: Vec<ApplySyncthingAssignment>,
+) -> Result<ApplySyncthingResult, String> {
+    use tauri::Manager;
+
+    let port: u16 = 8384;
+    let base = format!("http://127.0.0.1:{port}");
+    let web_ui_url = base.clone();
+
+    // Verify daemon is reachable
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        std::time::Duration::from_millis(500),
+    )
+    .map_err(|_| "Syncthing is not running — start it on the daemon step first.".to_string())?;
+
+    // Resolve Syncthing home dir (same path used by ensure_syncthing_running)
+    let syncthing_home = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Cannot resolve app data dir: {e}"))?
+        .join("syncthing");
+
+    let api_key = read_syncthing_api_key(&syncthing_home)?;
+
+    // GET current Syncthing config
+    let agent = ureq::AgentBuilder::new().build();
+    let config_resp: serde_json::Value = agent
+        .get(&format!("{base}/rest/config"))
+        .set("X-API-Key", &api_key)
+        .call()
+        .map_err(|e| format!("Failed to GET Syncthing config: {e}"))?
+        .into_json()
+        .map_err(|e| format!("Failed to parse Syncthing config: {e}"))?;
+
+    let mut config = config_resp;
+    let mut devices_added: Vec<String> = Vec::new();
+    let mut folders_configured: Vec<String> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+
+    // ── Merge devices ─────────────────────────────────────────────────────────
+    let existing_devices = config["devices"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    let mut merged_devices = existing_devices.clone();
+    for peer in &peers {
+        let already = existing_devices.iter().any(|d| {
+            d["deviceID"].as_str().unwrap_or("") == peer.device_id
+        });
+        if !already {
+            merged_devices.push(serde_json::json!({
+                "deviceID": peer.device_id,
+                "name": peer.name,
+                "addresses": ["dynamic"],
+                "compression": "metadata",
+                "introducer": false,
+                "skipIntroductionRemovals": false,
+                "introducedBy": "",
+                "paused": false,
+                "allowedNetworks": [],
+                "autoAcceptFolders": false,
+                "maxSendKbps": 0,
+                "maxRecvKbps": 0,
+                "ignoredFolders": [],
+                "maxRequestKiB": 0,
+                "untrusted": false,
+                "remoteGUIPort": 0
+            }));
+            devices_added.push(peer.name.clone());
+        }
+    }
+    config["devices"] = serde_json::Value::Array(merged_devices);
+
+    // ── Merge folders ─────────────────────────────────────────────────────────
+    // Group assignments by folder_id so we build one folder entry per folder.
+    let mut folder_map: std::collections::HashMap<&str, Vec<&ApplySyncthingAssignment>> =
+        std::collections::HashMap::new();
+    for a in &assignments {
+        folder_map.entry(a.folder_id.as_str()).or_default().push(a);
+    }
+
+    let existing_folders = config["folders"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut merged_folders = existing_folders.clone();
+
+    for (folder_id, folder_assignments) in &folder_map {
+        // All assignments for this folder share the same path and label
+        let first = folder_assignments[0];
+
+        // Build device-share entries for this folder
+        let mut device_entries: Vec<serde_json::Value> = Vec::new();
+        for a in folder_assignments {
+            let peer = match peers.iter().find(|p| p.id == a.peer_id) {
+                Some(p) => p,
+                None => {
+                    errors.push(format!("Peer not found for assignment on folder {}", folder_id));
+                    continue;
+                }
+            };
+            let mut entry = serde_json::json!({
+                "deviceID": peer.device_id,
+                "introducedBy": "",
+                "encryptionPassword": ""
+            });
+            if a.mode == "encrypted" && !a.encryption_password.is_empty() {
+                // Password set directly in JSON — never appears in logs or error strings
+                entry["encryptionPassword"] = serde_json::Value::String(
+                    a.encryption_password.clone(),
+                );
+            }
+            device_entries.push(entry);
+        }
+
+        // Check if this folder already exists
+        if let Some(pos) = merged_folders
+            .iter()
+            .position(|f| f["id"].as_str().unwrap_or("") == *folder_id)
+        {
+            // Update existing folder: merge device list
+            let existing_devs = merged_folders[pos]["devices"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let mut combined = existing_devs;
+            for dev in &device_entries {
+                let dev_id = dev["deviceID"].as_str().unwrap_or("");
+                if !combined.iter().any(|d| d["deviceID"].as_str().unwrap_or("") == dev_id) {
+                    combined.push(dev.clone());
+                }
+            }
+            merged_folders[pos]["devices"] = serde_json::Value::Array(combined);
+            folders_configured.push(first.label.clone());
+        } else {
+            // Add new folder — only required fields; Syncthing fills in defaults.
+            // folder_path is the local encrypted repo path; it is never logged.
+            let mut new_folder = serde_json::Map::new();
+            new_folder.insert("id".into(), serde_json::Value::String(folder_id.to_string()));
+            new_folder.insert("label".into(), serde_json::Value::String(first.label.clone()));
+            new_folder.insert("path".into(), serde_json::Value::String(first.folder_path.clone()));
+            new_folder.insert("type".into(), serde_json::Value::String("sendreceive".into()));
+            new_folder.insert("devices".into(), serde_json::Value::Array(device_entries));
+            new_folder.insert("rescanIntervalS".into(), serde_json::json!(3600));
+            new_folder.insert("fsWatcherEnabled".into(), serde_json::json!(true));
+            new_folder.insert("autoNormalize".into(), serde_json::json!(true));
+            merged_folders.push(serde_json::Value::Object(new_folder));
+            folders_configured.push(first.label.clone());
+        }
+    }
+    config["folders"] = serde_json::Value::Array(merged_folders);
+
+    // ── PUT updated config ────────────────────────────────────────────────────
+    let resp = agent
+        .put(&format!("{base}/rest/config"))
+        .set("X-API-Key", &api_key)
+        .set("Content-Type", "application/json")
+        .send_json(&config)
+        .map_err(|e| format!("Failed to apply Syncthing config: {e}"))?;
+
+    if resp.status() != 200 {
+        return Err(format!(
+            "Syncthing rejected config update (HTTP {}). Check the Syncthing web UI for details.",
+            resp.status()
+        ));
+    }
+
+    Ok(ApplySyncthingResult {
+        devices_added,
+        folders_configured,
+        errors,
+        web_ui_url,
+    })
+}
+
 /// Ensure the bundled Syncthing daemon is running.
 ///
 /// Fast path: if port 8384 is already open, returns immediately.
@@ -1448,15 +1868,10 @@ fn set_kopia_password(
     *lock = Some(password.clone());
     drop(lock);
 
-    // Persist to OS keychain — errors are reported but do not block the operation.
-    // If keychain is unavailable (headless CI, locked desktop session), the
-    // password still works for this session.
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
-        .map_err(|e| format!("keychain unavailable: {e}"))?;
-    entry
-        .set_password(&password)
-        .map_err(|e| format!("keychain write failed: {e}"))?;
-
+    // Persist to OS keychain.
+    // On macOS uses security CLI with -T "" so any build of the app can read
+    // without the system ACL prompt.
+    keychain_store(&password)?;
     Ok(())
 }
 
@@ -1467,15 +1882,18 @@ fn has_kopia_password(state: tauri::State<KopiaPasswordState>) -> bool {
     state.0.lock().map(|l| l.is_some()).unwrap_or(false)
 }
 
-/// Check whether a master password is stored in the OS keychain from a previous session.
-/// Does NOT return or load the password — call load_master_password_from_keychain to load it.
+/// Check whether a master password entry exists in the OS keychain.
+/// Uses metadata-only lookup — does NOT read the secret value, so no ACL dialog appears.
 #[tauri::command]
 fn has_password_in_keychain() -> bool {
-    keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
-        .ok()
-        .and_then(|e| e.get_password().ok())
-        .map(|p| !p.is_empty())
-        .unwrap_or(false)
+    #[cfg(target_os = "macos")]
+    {
+        return macos_entry_exists();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        matches!(keychain_retrieve(), Ok(Some(_)))
+    }
 }
 
 /// Load the master password from the OS keychain into process memory.
@@ -1485,17 +1903,13 @@ fn has_password_in_keychain() -> bool {
 /// The password is never returned to the frontend.
 #[tauri::command]
 fn load_master_password_from_keychain(state: tauri::State<KopiaPasswordState>) -> Result<bool, String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
-        .map_err(|e| format!("keychain unavailable: {e}"))?;
-    match entry.get_password() {
-        Ok(pw) if !pw.is_empty() => {
+    match keychain_retrieve()? {
+        Some(pw) => {
             let mut lock = state.0.lock().map_err(|_| "state lock error")?;
             *lock = Some(pw);
             Ok(true)
         }
-        Ok(_) => Ok(false), // empty entry
-        Err(keyring::Error::NoEntry) => Ok(false),
-        Err(e) => Err(format!("keychain read failed: {e}")),
+        None => Ok(false),
     }
 }
 
@@ -1529,12 +1943,7 @@ fn clear_master_password(state: tauri::State<KopiaPasswordState>) -> Result<(), 
     *lock = None;
     drop(lock);
 
-    if let Ok(entry) = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => {}
-            Err(e) => return Err(format!("keychain delete failed: {e}")),
-        }
-    }
+    keychain_delete()?;
     Ok(())
 }
 
@@ -1591,6 +2000,52 @@ fn get_mock_setup_state() -> ClientSetupState {
     }
 }
 
+// ── App config persistence (direct file I/O) ─────────────────────────────────
+//
+// Stores non-secret app configuration as JSON in the platform app-data directory.
+// Using direct std::fs I/O instead of tauri-plugin-store because the plugin
+// has silent initialization failures in dev mode that cause saves to be lost.
+
+const APP_CONFIG_FILE: &str = "app-config.json";
+
+/// Save arbitrary JSON config to `{app_data}/app-config.json`.
+/// The frontend passes the full config object as a JSON value.
+#[tauri::command]
+fn save_app_config(app: tauri::AppHandle, config: serde_json::Value) -> Result<(), String> {
+    use tauri::Manager;
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Cannot resolve app data dir: {e}"))?;
+    std::fs::create_dir_all(&data_dir)
+        .map_err(|e| format!("Cannot create app data dir: {e}"))?;
+    let path = data_dir.join(APP_CONFIG_FILE);
+    let json = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Serialization failed: {e}"))?;
+    std::fs::write(&path, json)
+        .map_err(|e| format!("Write failed: {e}"))?;
+    Ok(())
+}
+
+/// Load `{app_data}/app-config.json` and return it as a JSON value.
+/// Returns an empty object if the file does not exist yet.
+#[tauri::command]
+fn load_app_config(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    use tauri::Manager;
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Cannot resolve app data dir: {e}"))?
+        .join(APP_CONFIG_FILE);
+    if !path.exists() {
+        return Ok(serde_json::json!({}));
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Read failed: {e}"))?;
+    serde_json::from_str(&content)
+        .map_err(|e| format!("Parse failed: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1600,11 +2055,9 @@ pub fn run() {
         .manage(SyncthingProcessState(Mutex::new(None)))
         .manage({
             // On startup, attempt to load the master password from the OS keychain.
-            // If found, the user won't need to re-enter it this session.
-            let initial_password = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
-                .ok()
-                .and_then(|e| e.get_password().ok())
-                .filter(|p| !p.is_empty());
+            // Uses the platform helper (macOS: security CLI; others: keyring crate)
+            // so there is no ACL prompt on macOS regardless of which build is running.
+            let initial_password = keychain_retrieve().ok().flatten();
             KopiaPasswordState(Mutex::new(initial_password))
         })
         .manage(AppTestLabState(Mutex::new(TestLabStateInner {
@@ -1651,6 +2104,9 @@ pub fn run() {
             clear_master_password,
             check_syncthing_running,
             get_current_platform,
+            apply_syncthing_setup,
+            save_app_config,
+            load_app_config,
         ])
         .build(tauri::generate_context!())
         .expect("error while building NAS Backup Buddy")
