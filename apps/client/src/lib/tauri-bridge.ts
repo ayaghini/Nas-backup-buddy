@@ -408,6 +408,19 @@ export async function stopSyncthing(): Promise<void> {
   } catch { /* no-op */ }
 }
 
+/// Return the current compile-time platform string, e.g. "x86_64-pc-windows-msvc".
+export async function getCurrentPlatform(): Promise<string> {
+  try {
+    return await invoke<string>('get_current_platform');
+  } catch {
+    // In browser mode, derive from user-agent as a best-effort guess
+    const ua = navigator.userAgent.toLowerCase();
+    if (ua.includes('win')) return 'x86_64-pc-windows-msvc';
+    if (ua.includes('mac')) return 'aarch64-apple-darwin';
+    return 'x86_64-unknown-linux-gnu';
+  }
+}
+
 /// Probe Syncthing: binary present/version + TCP running check on port 8384.
 /// Fast read-only check — does not start Syncthing.
 export async function checkSyncthingRunning(): Promise<SyncthingRunStatus> {

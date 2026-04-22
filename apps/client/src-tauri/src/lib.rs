@@ -201,6 +201,16 @@ fn tool_status_str(s: &ToolStatus) -> &'static str {
     }
 }
 
+/// Expose the current platform to the frontend as a plain string.
+/// Used by the install-helper UI to show the right package manager command.
+#[tauri::command]
+fn get_current_platform() -> String {
+    match current_platform() {
+        Platform::X86_64Windows | Platform::Aarch64MacOs => current_platform().to_string(),
+        p => p.to_string(),
+    }
+}
+
 /// Detect the current compile-time target platform.
 fn current_platform() -> Platform {
     if cfg!(all(target_arch = "x86_64", target_os = "linux")) {
@@ -1584,6 +1594,7 @@ fn get_mock_setup_state() -> ClientSetupState {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(SyncthingProcessState(Mutex::new(None)))
@@ -1639,6 +1650,7 @@ pub fn run() {
             verify_current_password,
             clear_master_password,
             check_syncthing_running,
+            get_current_platform,
         ])
         .build(tauri::generate_context!())
         .expect("error while building NAS Backup Buddy")

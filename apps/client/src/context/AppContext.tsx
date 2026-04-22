@@ -26,6 +26,7 @@ import {
   loadMasterPasswordFromKeychain,
   runRealBackupFromConfig,
 } from '../lib/tauri-bridge';
+import { loadPersistedConfig, savePersistedConfig } from '../lib/persistence';
 
 export interface RealLabState {
   lab: TestLabInfo | null;
@@ -81,6 +82,8 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   const [wizardConfigs, setWizardConfigs] = useState<SetupDraftConfig[]>([]);
   const [masterPasswordSet, setMasterPasswordSetState] = useState(false);
   const [repoJobStatuses, setRepoJobStatuses] = useState<Record<number, RepoJobStatus>>({});
+  // True once the persisted store has been loaded into state (prevents saving before loading)
+  const [persistedLoaded, setPersistedLoaded] = useState(false);
   const [offlineMode, setOfflineMode] = useState(false);
   const [healthReportConsent, setHealthReportConsent] = useState(false);
   const [recoveryKeyConfirmed, setRecoveryKeyConfirmed] = useState(false);
@@ -117,6 +120,22 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     }
     void initPassword();
   }, []);
+
+  // On mount: restore persisted configuration from disk
+  useEffect(() => {
+    loadPersistedConfig().then(saved => {
+      if (saved.wizardConfigs?.length) setWizardConfigs(saved.wizardConfigs);
+      if (saved.recoveryKeyConfirmed) setRecoveryKeyConfirmed(saved.recoveryKeyConfirmed);
+      if (saved.healthReportConsent) setHealthReportConsent(saved.healthReportConsent);
+      if (saved.offlineMode) setOfflineMode(saved.offlineMode);
+    }).finally(() => setPersistedLoaded(true));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save wizardConfigs to disk whenever they change (after initial load)
+  useEffect(() => {
+    if (!persistedLoaded) return;
+    void savePersistedConfig({ wizardConfigs });
+  }, [wizardConfigs, persistedLoaded]);
 
   // On mount: detect real tool status and update setup state
   useEffect(() => {
@@ -267,16 +286,19 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   const handleSetRecoveryKeyConfirmed = useCallback((v: boolean) => {
     setRecoveryKeyConfirmed(v);
     setSetupState(prev => ({ ...prev, recovery_key_confirmed: v }));
+    void savePersistedConfig({ recoveryKeyConfirmed: v });
   }, []);
 
   const handleSetHealthReportConsent = useCallback((v: boolean) => {
     setHealthReportConsent(v);
     setSetupState(prev => ({ ...prev, health_report_consent: v }));
+    void savePersistedConfig({ healthReportConsent: v });
   }, []);
 
   const handleSetOfflineMode = useCallback((v: boolean) => {
     setOfflineMode(v);
     setSetupState(prev => ({ ...prev, offline_mode: v }));
+    void savePersistedConfig({ offlineMode: v });
   }, []);
 
   const wizardConfig = wizardConfigs.length > 0 ? wizardConfigs[wizardConfigs.length - 1] : null;
