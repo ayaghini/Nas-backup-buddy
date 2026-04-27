@@ -1,9 +1,14 @@
 pub mod commands;
 pub mod config;
 pub mod health;
+pub mod host_setup;
 pub mod integration;
+pub mod overlay;
+pub mod peer_bundle;
+pub mod sftp_verify;
 pub mod kopia;
 pub mod redaction;
+pub mod remote_target;
 pub mod safety;
 pub mod syncthing;
 pub mod test_lab;

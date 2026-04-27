@@ -226,7 +226,7 @@ export function TestLab() {
         <h1 className="text-lg font-semibold text-slate-100">Integration Test Lab</h1>
       </div>
       <p className="text-sm text-slate-400 mb-4">
-        Runs a real Kopia + Syncthing integration test using generated sample data.
+        Runs a developer Kopia integration test using generated sample data.
       </p>
 
       {/* Safety banner */}
@@ -244,7 +244,7 @@ export function TestLab() {
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2 text-sm font-medium text-slate-200">
             <StatusBadge state={probes.state} />
-            Step 1 — Probe Kopia &amp; Syncthing
+            Step 1 — Probe Tools
           </div>
           <button
             onClick={handleProbeTools}
@@ -326,12 +326,12 @@ export function TestLab() {
         )}
       </section>
 
-      {/* Step 4: Prepare Syncthing transport */}
+      {/* Step 4: legacy transport definition */}
       <section className="mb-4">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2 text-sm font-medium text-slate-200">
             <StatusBadge state={transport.state} />
-            Step 4 — Prepare Syncthing Transport
+            Step 4 — Prepare Legacy Transport Definition
           </div>
           <button
             onClick={handlePrepareTransport}

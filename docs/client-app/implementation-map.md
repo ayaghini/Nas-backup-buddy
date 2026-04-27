@@ -30,7 +30,7 @@ Decision gate:
 
 Goal: prove the Rust service can validate config and model health without the UI.
 
-Status: mostly complete for the pre-alpha service foundation. Rust modules exist for config, health, redaction, safety validation, tool manifest modeling, Kopia execution, Syncthing transport-folder preparation, and generated-data test labs. Cargo tests pass in the current development environment.
+Status: mostly complete for the pre-alpha service foundation, but the architecture has pivoted. Rust modules exist for config, health, redaction, safety validation, tool manifest modeling, Kopia execution, Syncthing transport-folder preparation, and generated-data test labs. The next service phase should add SFTP remote repository targets and overlay reachability checks.
 
 Deliverables:
 
@@ -46,8 +46,9 @@ Deliverables:
 
 Required checks:
 
-- Reject source folder used as Syncthing target.
-- Reject repository path inside source path.
+- Reject source folder exposed as any peer target or share.
+- Reject local cache/repository paths inside source path.
+- Validate remote SFTP target shape without logging secrets.
 - Reject missing quota for host mode.
 - Map restore failure to Critical.
 - Map canary mismatch to Critical.
@@ -71,15 +72,17 @@ Decision gate:
 
 Goal: make safe setup understandable.
 
-Status: implemented for local pre-alpha use. The wizard supports role-aware setup, source/repository safety checks, native source-folder and repository-folder pickers, hosted-storage quota input, retention settings, recovery-key confirmation, health-report consent, validation-before-save, and local persistence. OS keychain storage and real web pairing remain future work.
+Status: implemented for local pre-alpha use, but the wizard still reflects parts of the old local-repository/Syncthing model. The next iteration should ask data owners for source folders, backup secret confirmation, remote SFTP target details, overlay peer address, retention, and restore-drill settings. Storage hosts should configure hosted storage path, quota, overlay address, and isolated SFTP target details.
 
 Deliverables:
 
 - Setup wizard.
 - Role selection: Data Owner, Storage Host, Reciprocal Match.
 - Source folder selection.
-- Repository path selection.
+- Remote repository target selection or entry.
 - Hosted storage path and quota setup.
+- Overlay connection setup.
+- SFTP target setup.
 - Retention policy screen.
 - Recovery password/key backup confirmation.
 - Pairing token screen.
@@ -89,7 +92,8 @@ Required checks:
 
 - UI cannot proceed past unsafe folder layout.
 - UI cannot complete data owner setup without key backup confirmation.
-- UI shows that Syncthing transports encrypted repository data only.
+- UI shows that Kopia writes encrypted repository data directly to the peer SFTP target.
+- UI labels Syncthing, if present, as optional mirror/legacy mode.
 - UI supports mock/offline mode.
 
 Exit criteria:
@@ -99,19 +103,22 @@ Exit criteria:
 - No paid marketplace or cloud storage features appear.
 - Health-report consent defaults off and persists into local app state.
 
-## Phase 3: Bundled Kopia And Syncthing Manager
+## Phase 3: Kopia, SFTP, And Overlay Manager
 
-Goal: make tool management predictable and safe.
+Goal: make remote backup target management predictable and safe.
 
-Status: partially implemented. Manifest modeling, resource manifest scaffolding, tool status types, and real SHA-256 verification exist. macOS arm64 Kopia and Syncthing binaries are bundled with manifest checksums. Kopia has guarded generated-data execution paths. Syncthing is currently used for transport-folder validation/config generation only, not live daemon control. Other platforms still fail closed until release tooling supplies verified artifacts.
+Status: SFTP integration implemented. Tool manifest, SHA-256 verification, and generated-data Kopia execution exist. SFTP `create_repository`/`connect_repository` Kopia runner methods are complete. Per-target Kopia config isolation via `SftpRepoTarget::config_id()` prevents one peer's config from being reused for another. Overlay TCP probe is live; it confirms port reachability only (SSH/SFTP auth is left to Kopia). The Peer Storage view wires probe and connect results to shared AppContext state so Health Checks update automatically. Two-machine restore evidence and production SSH key credential management remain future work.
 
 Deliverables:
 
 - Tool manifest.
-- Kopia and Syncthing version/status detection.
+- Kopia version/status detection.
 - SHA-256 checksum verification.
 - Tool status screen.
 - Fail-closed behavior for missing or mismatched binaries.
+- SFTP target validator.
+- Overlay reachability probe.
+- Kopia SFTP repository create/connect flow.
 - README notes for updating pinned tool versions.
 
 Required checks:
@@ -125,18 +132,19 @@ Exit criteria:
 
 - Client can detect and validate bundled tools on the local platform.
 - Unsupported or tampered tool state blocks setup.
+- Client can validate remote SFTP target reachability without leaking credentials or paths.
 
 ## Phase 4: Health Checks And Restore Drill Automation
 
 Goal: prove backup safety controls work end to end.
 
-Status: partially implemented with real generated-data evidence. Health and restore drill flows are wired into shared app state. Repository verification failure, canary mismatch, and restore failure map to Critical and block Protected status in the UI. The client can create a generated-data Kopia test lab, run a real snapshot, run `kopia snapshot verify`, restore a canary file, and build health from those outcomes. Real Syncthing status polling, scheduled production backups, and peer-held restore evidence remain future work.
+Status: partially implemented with real generated-data evidence. Health and restore drill flows are wired into shared app state. Repository verification failure, canary mismatch, and restore failure map to Critical and block Protected status in the UI. The client can create a generated-data Kopia test lab, run a real snapshot, run `kopia snapshot verify`, restore a canary file, and build health from those outcomes. Remote SFTP repository backup, overlay/SFTP health, scheduled production backups, and peer-held restore evidence remain future work.
 
 Deliverables:
 
 - Backup runner.
 - Repository verification runner using `kopia snapshot verify`.
-- Sync status checker.
+- Remote target reachability checker.
 - Restore drill runner.
 - Canary checksum verification.
 - Local incident/status mapping.
@@ -146,8 +154,8 @@ Required checks:
 
 - Backup stale more than 24 hours maps to Warning.
 - Backup stale more than 72 hours maps to Critical.
-- Sync stale more than 24 hours maps to Warning.
-- Sync stale more than 72 hours maps to Critical.
+- Remote target unreachable more than 24 hours maps to Warning.
+- Remote target unreachable more than 72 hours maps to Critical.
 - Free quota below 15 percent maps to Warning.
 - Free quota below 5 percent maps to Critical.
 - Restore failure maps to Critical.
@@ -161,7 +169,7 @@ Exit criteria:
 
 Current gap:
 
-- Test-lab health intentionally reports sync and peer fields as stale because no live Syncthing peer is running in that flow. A future health model should distinguish "not configured in test lab" from a production sync failure.
+- Test-lab health must distinguish "remote target not configured in test lab" from production remote-target failure.
 
 ## Phase 5: Pairing With Web App
 
@@ -210,7 +218,7 @@ Required checks:
 - Build succeeds on local development platform.
 - Package includes license files.
 - Package includes tool manifest.
-- Package documents bundled Kopia and Syncthing versions.
+- Package documents bundled Kopia version and any optional transport/helper tools.
 - Signing is used where practical or explicitly marked as pending.
 
 Exit criteria:

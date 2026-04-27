@@ -12,6 +12,12 @@ sha2 = "0.10"
 hex = "0.4"
 thiserror = "1"
 toml = "0.8"
+tempfile = "3"
+# Native SSH/SFTP — eliminates external sftp binary dependency.
+# Links against libssh2 (available on macOS via system OpenSSH / Homebrew;
+# on Linux install libssh2-dev; on Windows via OpenSSH optional feature or Git).
+ssh2 = "0.9"
+# Base64 encoding for SHA-256 host-key fingerprints (OpenSSH standard format).
+base64 = "0.22"
 
 [dev-dependencies]
-tempfile = "3"

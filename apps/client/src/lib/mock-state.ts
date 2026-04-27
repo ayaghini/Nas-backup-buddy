@@ -23,6 +23,10 @@ export const DEFAULT_SETUP_STATE: ClientSetupState = {
     last_sync_at: null,
     bytes_pending: null,
   },
+  remote_repository: {
+    status: 'not_configured',
+    last_ok_hours: -1.0,
+  },
   recovery_key_confirmed: false,
   health_report_consent: false,
   offline_mode: false,
@@ -41,6 +45,8 @@ export const DEFAULT_HEALTH_REPORT: HealthReport = {
   peer_offline_hours: -1.0,       // no peer configured → Ok
   repository_check_ok: false,
   repository_check_message: null,
+  remote_target_status: 'not_configured', // no SFTP target configured yet → Ok (not Critical)
+  remote_target_last_ok_hours: -1.0,
 };
 
 // Start with no log lines — real lines accumulate as operations run.

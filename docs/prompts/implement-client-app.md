@@ -29,9 +29,10 @@ Build target:
 
 Product requirements:
 - Local desktop UI plus Rust background service.
-- Bundle/manage pinned Kopia and Syncthing versions.
+- Bundle/manage pinned Kopia versions.
 - Default backup engine is Kopia.
-- Syncthing is transport only; never sync live source folders to peers.
+- Default v1 repository target is SFTP over a private overlay network such as Tailscale, Headscale, or WireGuard.
+- Syncthing is optional/future mirror mode only; never sync live source folders to peers.
 - Backups must be encrypted before leaving the user device.
 - The web app must never receive backup passwords, private keys, plaintext file names, or file contents.
 - Health reporting must use an explicit allowlist.
@@ -40,16 +41,17 @@ Minimum v1 features:
 - Onboarding wizard:
   - choose role: Data Owner, Storage Host, or Reciprocal Match
   - select source folders
-  - select encrypted repository location
+  - select or enter remote SFTP repository target
   - select hosted peer-storage location and quota
+  - configure overlay peer address
   - confirm password/key backup
   - configure retention policy
   - pair with web app using a pairing token
 - Local service:
-  - detect bundled Kopia/Syncthing
+  - detect bundled Kopia
   - validate safe folder layout
-  - create encrypted Kopia repository
-  - configure Syncthing repository folder
+  - create encrypted Kopia SFTP repository
+  - validate overlay and SFTP target reachability
   - run backup
   - run repository verification with `kopia snapshot verify`
   - run canary restore drill
@@ -59,15 +61,15 @@ Minimum v1 features:
   - block direct sharing of source folders
   - block Protected status until restore drill succeeds
   - mark Critical on restore failure or canary mismatch
-  - warn when backup/sync stale over 24h
-  - mark Critical when backup/sync stale over 72h
+  - warn when backup or remote target is stale/unreachable over 24h
+  - mark Critical when backup or remote target is stale/unreachable over 72h
   - warn when free quota below 15 percent
   - mark Critical when free quota below 5 percent
 - UI views:
   - Dashboard
   - Setup wizard
   - Backup plan
-  - Syncthing connection
+  - Peer storage / SFTP connection
   - Restore drill
   - Health checks
   - Logs with redaction

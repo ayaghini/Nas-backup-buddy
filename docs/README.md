@@ -6,7 +6,7 @@ Start here when working on the project.
 
 - Feasibility and architecture docs are in place.
 - `apps/web` contains the current coordination web prototype.
-- `apps/client` contains the current Tauri + Rust desktop client with setup flows, local persistence, folder pickers, recovery-key handling, generated-data Kopia backup/verify/restore testing, Syncthing transport-folder safety, and fail-closed bundled-tool verification.
+- `apps/client` contains the current Tauri + Rust desktop client with Peer Connection setup, local persistence, folder pickers, recovery-key handling, generated-data Kopia backup/verify/restore testing, Kopia-over-SFTP/private-overlay flows, and fail-closed bundled-tool verification. Syncthing is legacy/developer-only.
 - Release foundations have started with AGPL-3.0-only and a third-party notices placeholder.
 - The project is not production-ready.
 
@@ -50,6 +50,7 @@ Start here when working on the project.
 ## Prompts
 
 - [Implement Client App Prompt](prompts/implement-client-app.md)
+- [Implement Peer Connection Redesign Prompt](prompts/implement-peer-connection-redesign.md)
 - [Project Next Steps Agent Prompt](prompts/project-next-steps.md)
 
 ## Decision Records

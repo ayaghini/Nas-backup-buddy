@@ -8,7 +8,7 @@
 //
 // Only non-secret data is stored here. Passwords stay in the OS keychain.
 
-import type { SetupDraftConfig } from './types';
+import type { BackupTarget, HostAllocation, OwnerSshKey, OverlayMeta, SetupDraftConfig } from './types';
 
 declare global {
   interface Window { __TAURI_INTERNALS__?: unknown; }
@@ -23,6 +23,18 @@ async function invoke<T>(command: string, args?: Record<string, unknown>): Promi
   return tauriInvoke<T>(command, args);
 }
 
+export interface SftpBundleFields {
+  overlayHost: string;
+  sftpUser: string;
+  sftpPort: string;
+  sftpPath: string;
+  overlayProvider: string;
+  quotaGb: number;
+  matchId: string;
+  hostKeyFingerprintNote: string;
+  compatibilityNote: string;
+}
+
 export interface PersistedConfig {
   wizardConfigs: SetupDraftConfig[];
   recoveryKeyConfirmed: boolean;
@@ -30,6 +42,16 @@ export interface PersistedConfig {
   offlineMode: boolean;
   /** True after the user has successfully applied a Syncthing configuration. */
   syncthingConfigured: boolean;
+  /** Non-secret connection fields imported from the last Owner Connection Bundle. */
+  sftpBundleFields?: SftpBundleFields;
+  /** Non-secret overlay network metadata (provider, addresses, port, last status). */
+  overlayMeta?: OverlayMeta;
+  /** One hosted storage allocation per peer this device stores data for. */
+  hostAllocations?: HostAllocation[];
+  /** One backup target per peer this device backs up to. */
+  backupTargets?: BackupTarget[];
+  /** Non-secret owner-side SSH key refs/public keys, one per match. */
+  ownerSshKeys?: OwnerSshKey[];
 }
 
 export async function loadPersistedConfig(): Promise<Partial<PersistedConfig>> {
@@ -42,6 +64,15 @@ export async function loadPersistedConfig(): Promise<Partial<PersistedConfig>> {
       healthReportConsent: typeof raw.healthReportConsent === 'boolean' ? raw.healthReportConsent : false,
       offlineMode: typeof raw.offlineMode === 'boolean' ? raw.offlineMode : false,
       syncthingConfigured: typeof raw.syncthingConfigured === 'boolean' ? raw.syncthingConfigured : false,
+      sftpBundleFields: typeof raw.sftpBundleFields === 'object' && raw.sftpBundleFields !== null
+        ? raw.sftpBundleFields as SftpBundleFields
+        : undefined,
+      overlayMeta: typeof raw.overlayMeta === 'object' && raw.overlayMeta !== null
+        ? raw.overlayMeta as OverlayMeta
+        : undefined,
+      hostAllocations: Array.isArray(raw.hostAllocations) ? raw.hostAllocations as HostAllocation[] : [],
+      backupTargets: Array.isArray(raw.backupTargets) ? raw.backupTargets as BackupTarget[] : [],
+      ownerSshKeys: Array.isArray(raw.ownerSshKeys) ? raw.ownerSshKeys as OwnerSshKey[] : [],
     };
   } catch (e) {
     console.error('[persistence] load failed:', e);

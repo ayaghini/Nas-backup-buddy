@@ -8,7 +8,7 @@ The recommended first product is:
 
 > Encrypted reciprocal offsite backup matching for homelab users, with health monitoring and restore testing.
 
-The most important technical finding is that Syncthing should not be the backup engine. Syncthing is a strong peer-to-peer transfer and synchronization layer, but its own documentation warns that it is not a great backup application because modifications and deletions propagate to peers. Use Kopia, restic, or BorgBackup to create encrypted, versioned snapshots, then use Syncthing to replicate those encrypted repositories to a matched peer.
+The most important technical finding is that Syncthing should not be the backup engine or the default v1 transport. Syncthing is a strong peer-to-peer transfer and synchronization layer, but its own documentation warns that it is not a great backup application because modifications and deletions propagate to peers. It also requires the data owner to keep a local encrypted repository copy before replication. Use Kopia first to create encrypted, versioned snapshots directly on peer-hosted SFTP storage over a private overlay network.
 
 ## Feasibility Rating
 
@@ -35,10 +35,10 @@ The most important technical finding is that Syncthing should not be the backup 
 
 Use a layered model:
 
-1. Backup engine creates encrypted snapshots locally.
-2. Syncthing replicates the encrypted repository to the matched peer.
-3. Website coordinates profiles, matching, pacts, reputation, and alerts.
-4. Optional private discovery/relay improves connectivity later.
+1. Backup engine encrypts snapshots on the data-owner device.
+2. Kopia writes the encrypted repository directly to peer-hosted SFTP storage.
+3. A private overlay network, such as Tailscale, Headscale, or WireGuard, handles peer reachability.
+4. Website coordinates profiles, matching, pacts, reputation, and alerts.
 5. Agent automates setup and health reporting after the manual process is proven.
 
 ## Why Not Raw Syncthing As Backup
@@ -51,6 +51,7 @@ Raw Syncthing can be useful for:
 - Peer discovery.
 - Encrypted replication to an untrusted device.
 - Moving encrypted repository files created by a backup tool.
+- Optional mirror mode for users who can afford the extra local repository storage.
 
 Raw Syncthing should not be used as the only protection against:
 
@@ -68,7 +69,7 @@ Raw Syncthing should not be used as the only protection against:
 | Kopia | Encrypted by default, snapshots, policies, dedupe, GUI and CLI, mount/restore options | More moving parts than restic | Best first candidate |
 | restic | Simple, mature, encrypted, dedupe, broad backend support | CLI-first; retention needs careful setup | Strong MVP candidate |
 | BorgBackup | Excellent compression/dedupe, authenticated encryption, strong Unix ecosystem | Less Windows-friendly, often SSH-centric | Great for advanced Linux users |
-| Syncthing only | Easy sync and peer connectivity | Not a real backup engine | Transport only |
+| Syncthing only | Easy sync and peer connectivity | Not a real backup engine; can require extra local repository storage | Optional transport/mirror only |
 
 ## Existing Adjacent Models
 
@@ -132,4 +133,3 @@ Avoid public paid marketplace features until the project proves:
 ## Conclusion
 
 Proceed with the project, but keep the first version narrow. The valuable product is not "Syncthing for strangers." The valuable product is the coordination and safety layer that makes encrypted reciprocal backup understandable, testable, and trustworthy for homelab users.
-

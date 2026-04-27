@@ -8,11 +8,11 @@ The client must make the safe path the easiest path. If the app is unsure whethe
 
 | Threat | Control |
 | --- | --- |
-| Peer attempts to read user data | Client-side encryption with Kopia before Syncthing transport |
-| User accidentally syncs live data | Source-folder safety validator blocks direct source sync |
+| Peer attempts to read user data | Client-side encryption with Kopia before SFTP upload |
+| User accidentally exposes live data | Source-folder safety validator blocks direct source shares and peer targets |
 | User loses recovery password/key | Required key backup confirmation and restore drill |
 | Ransomware changes source data | Snapshot retention and delayed pruning guidance |
-| Peer disappears | Health checks, stale sync alerts, future peer replacement flow |
+| Peer disappears | Health checks, remote-target alerts, future peer replacement flow |
 | Peer disk fills up | Quota checks and warning/critical thresholds |
 | Tool binary is tampered with | Pinned tool manifest and checksum verification |
 | Logs leak sensitive data | Log redaction before display or reporting |
@@ -40,7 +40,7 @@ Allowed:
 - Match ID.
 - Role.
 - Last backup status and timestamp.
-- Last sync status and timestamp.
+- Last remote repository reachability status and timestamp.
 - Last restore drill status and timestamp.
 - Repository size.
 - Available quota percent.
@@ -56,7 +56,8 @@ Disallowed:
 - Source file contents.
 - Full local source paths.
 - Raw Kopia logs.
-- Raw Syncthing logs.
+- Raw SSH/SFTP logs.
+- Raw Syncthing logs from optional mirror mode.
 - Unredacted stack traces or command lines.
 
 ## Log Redaction
@@ -77,7 +78,7 @@ Display logs as operational events where possible:
 - `backup_started`
 - `backup_completed`
 - `backup_failed`
-- `sync_stale`
+- `remote_target_unreachable`
 - `repository_check_failed`
 - `restore_drill_failed`
 - `canary_checksum_mismatch`
@@ -87,7 +88,7 @@ Display logs as operational events where possible:
 The app should request the minimum permissions needed to:
 
 - Read selected source folders.
-- Write encrypted repository data.
+- Write encrypted repository data to selected remote targets.
 - Write hosted peer-storage data.
 - Execute bundled tools.
 - Store and read local config and secret references.
@@ -96,7 +97,7 @@ The app should not request broad disk access until the user selects folders that
 
 ## Tool And Update Verification
 
-Bundled Kopia and Syncthing must be controlled by a manifest with:
+Bundled Kopia and any bundled helper tools must be controlled by a manifest with:
 
 - Tool name.
 - Version.
@@ -121,11 +122,11 @@ App updates should be signed where practical. Release notes must call out bundle
 | Restore fails | Mark Critical, block Protected, stop pruning, create incident payload |
 | Canary mismatch | Mark Critical, block Protected, preserve logs, create incident payload |
 | Password/key missing | Mark Critical, block Protected, require new protected setup |
-| Source folder selected as sync target | Block setup and explain safe folder layout |
+| Source folder selected as peer target/share | Block setup and explain safe folder layout |
 | Backup stale more than 24 hours | Warning |
 | Backup stale more than 72 hours | Critical |
-| Sync stale more than 24 hours | Warning |
-| Sync stale more than 72 hours | Critical |
+| Remote repository unreachable more than 24 hours | Warning |
+| Remote repository unreachable more than 72 hours | Critical |
 | Free quota below 15 percent | Warning |
 | Free quota below 5 percent | Critical |
 | Peer offline more than 24 hours | Warning |
@@ -137,7 +138,7 @@ App updates should be signed where practical. Release notes must call out bundle
 The client must block Protected status until:
 
 - Backup snapshot exists.
-- Encrypted repository has synced to peer.
+- Remote encrypted repository is reachable on peer storage.
 - Restore drill completed.
 - Canary checksum matches.
 - User confirmed recovery password/key backup.
@@ -164,4 +165,3 @@ Diagnostic bundles must not include:
 - Full local source paths.
 - File names from source folders.
 - Raw tool logs.
-

@@ -33,13 +33,12 @@ export function About() {
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
         <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Bundled Tools</h3>
         <p className="text-xs text-slate-400 leading-relaxed">
-          This application bundles pinned versions of Kopia and Syncthing.
+          This application bundles a pinned version of Kopia for encrypted backup operations.
           Their licenses and checksums are listed in <code>THIRD_PARTY_NOTICES.md</code> at the root of the repository.
         </p>
         <div className="space-y-1.5">
           {[
             { name: 'Kopia',       license: 'Apache-2.0', note: 'backup engine' },
-            { name: 'Syncthing',   license: 'MPL-2.0',    note: 'transport layer' },
           ].map(tool => (
             <div key={tool.name} className="flex items-center gap-3 text-xs">
               <span className="text-slate-300 font-medium w-20">{tool.name}</span>

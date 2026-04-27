@@ -10,7 +10,7 @@ Use it to validate:
 - Native folder selection in the setup wizard.
 - Pinned bundled-tool detection.
 - Real generated-data Kopia snapshot, `snapshot verify`, restore, and canary checksum verification.
-- Syncthing transport-folder safety and redacted configuration output.
+- Legacy Syncthing transport-folder safety and redacted configuration output.
 - Health threshold evaluation from recorded test-lab outcomes.
 - Log redaction behavior.
 
@@ -207,8 +207,8 @@ Before calling a local test complete, confirm:
 | Kopia backup | Real generated-data test-lab execution. |
 | Repository verification | Real `kopia snapshot verify`. |
 | Restore drill | Real generated-data restore and canary SHA-256 compare. |
-| Syncthing transport safety | Real validation and redacted config generation. |
-| Syncthing daemon/API | Pending. |
+| Legacy Syncthing transport safety | Real validation and redacted config generation for optional mirror mode. |
+| SFTP-over-overlay remote repository | Pending. |
 | Production scheduling | Pending. |
 | OS keychain | Pending. |
 | Web API pairing | Pending. |
@@ -219,7 +219,7 @@ Before calling a local test complete, confirm:
 1. A real Kopia binary is bundled and checksum-verified on every release platform.
 2. Production secrets are stored through OS keychain or an equivalent platform secret store.
 3. Scheduled backups run from selected source folders without exposing plaintext metadata.
-4. Syncthing replicates the encrypted repository to a second machine.
-5. A restore from the peer-held repository copy succeeds with matching canary checksum.
+4. Kopia writes the encrypted repository directly to peer-hosted SFTP storage over a private overlay.
+5. A restore from the peer-hosted repository succeeds with matching canary checksum.
 6. Health reports remain allowlisted and redacted.
 7. Signed release artifacts, license files, checksums, and rollback notes are complete.

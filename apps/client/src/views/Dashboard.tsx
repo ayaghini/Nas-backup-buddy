@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, CheckCircle, ChevronRight, HardDrive, RotateCcw, Shield, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ChevronRight, HardDrive, RotateCcw, Server, Shield, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import {
@@ -6,7 +6,6 @@ import {
   kopiaStatusLabel,
   readinessLabel,
   roleLabel,
-  syncthingStateLabel,
   toolStatusLabel,
 } from '../lib/mock-state';
 
@@ -26,33 +25,43 @@ function ReadinessBadge({ readiness }: { readiness: string | undefined }) {
   );
 }
 
-function ToolBadge({ status }: { status: string }) {
-  const ok = status === 'ready';
+function ToolBadge({ status, label }: { status: string; label?: string }) {
+  const isReady = status === 'ready';
+  const isPresent = status === 'present';
+  const color = isReady ? 'text-emerald-400' : isPresent ? 'text-amber-400' : 'text-red-400';
   return (
-    <span className={`text-xs font-medium ${ok ? 'text-emerald-400' : 'text-red-400'}`}>
-      {toolStatusLabel(status)}
+    <span className={`text-xs font-medium ${color}`}>
+      {toolStatusLabel(status)}{label && !isReady ? ` — ${label}` : ''}
     </span>
   );
 }
 
-function CheckRow({ done, label }: { done: boolean; label: string }) {
+function CheckRow({ done, label, optional }: { done: boolean; label: string; optional?: boolean }) {
   return (
     <div className="flex items-center gap-2 text-sm">
       {done
         ? <CheckCircle size={14} className="text-emerald-400 flex-shrink-0" />
-        : <AlertTriangle size={14} className="text-amber-400 flex-shrink-0" />
+        : optional
+          ? <div className="w-3.5 h-3.5 rounded-full border border-slate-700 flex-shrink-0" />
+          : <AlertTriangle size={14} className="text-amber-400 flex-shrink-0" />
       }
-      <span className={done ? 'text-slate-300' : 'text-slate-400'}>{label}</span>
+      <span className={done ? 'text-slate-300' : optional ? 'text-slate-600' : 'text-slate-400'}>
+        {label}
+        {optional && <span className="text-slate-700 ml-1">(optional)</span>}
+      </span>
     </div>
   );
 }
 
 // Maps a blocking reason text fragment to the route that resolves it.
 const REASON_ROUTES: Array<{ fragment: string; to: string; label: string }> = [
-  { fragment: 'recovery key', to: '/recovery', label: 'Set up →' },
-  { fragment: 'Recovery key', to: '/recovery', label: 'Set up →' },
-  { fragment: 'not configured', to: '/setup',   label: 'Run wizard →' },
-  { fragment: 'repository',    to: '/backup',   label: 'View →' },
+  { fragment: 'recovery key',  to: '/recovery',      label: 'Set up →' },
+  { fragment: 'Recovery key',  to: '/recovery',      label: 'Set up →' },
+  { fragment: 'not configured', to: '/setup',        label: 'Run wizard →' },
+  { fragment: 'repository',    to: '/backup',        label: 'View →' },
+  { fragment: 'authentication', to: '/peer-storage', label: 'Peer Storage →' },
+  { fragment: 'host key',      to: '/peer-storage',  label: 'Peer Storage →' },
+  { fragment: 'unreachable',   to: '/peer-storage',  label: 'Peer Storage →' },
 ];
 
 function actionForReason(reason: string): { to: string; label: string } | null {
@@ -62,27 +71,43 @@ function actionForReason(reason: string): { to: string; label: string } | null {
   return null;
 }
 
+function remoteTargetLabel(status: string): string {
+  switch (status) {
+    case 'not_configured': return 'Not configured';
+    case 'reachable': return 'Reachable';
+    case 'tcp_port_reachable': return 'TCP port open';
+    case 'unreachable': return 'Unreachable';
+    case 'auth_failed': return 'Auth failed';
+    case 'host_key_mismatch': return 'Host key mismatch';
+    case 'quota_warning': return 'Quota warning';
+    case 'error': return 'Error';
+    default: return status;
+  }
+}
+
 export function Dashboard() {
   const navigate = useNavigate();
-  const { setupState, readiness, offlineMode, toolStatus, realLab, masterPasswordSet, wizardConfig } = useApp();
+  const {
+    setupState, readiness, offlineMode, toolStatus, realLab,
+    masterPasswordSet, wizardConfig, healthReport,
+  } = useApp();
   const repo = setupState.kopia_repository;
-  const sync = setupState.syncthing_folder;
+  const remote = setupState.remote_repository;
   const drillPassed = realLab.drill?.result === 'pass';
 
   const backupAgo = repo.last_snapshot_at
     ? new Date(repo.last_snapshot_at).toLocaleString()
     : 'Never';
-  const syncAgo = sync.last_sync_at
-    ? new Date(sync.last_sync_at).toLocaleString()
-    : 'Never';
+
+  const remoteStatusOk = remote.status === 'reachable';
+  const hasSftpConfig = !!(wizardConfig?.overlay_host?.trim());
 
   const setupChecks = [
-    { done: repo.status !== 'not_configured', label: 'Kopia repository configured' },
-    { done: repo.status === 'check_passed', label: 'Repository verification passed' },
-    { done: sync.state !== 'not_configured', label: 'Syncthing folder configured' },
-    { done: sync.state === 'in_sync', label: 'Repository synced to peer' },
-    { done: masterPasswordSet, label: 'Master encryption password set' },
-    { done: drillPassed, label: 'Restore drill completed' },
+    { done: repo.status !== 'not_configured',  label: 'Kopia repository configured',     optional: false },
+    { done: repo.status === 'check_passed',    label: 'Repository verification passed',  optional: false },
+    { done: remoteStatusOk,                    label: 'Remote SFTP target reachable',    optional: !hasSftpConfig },
+    { done: masterPasswordSet,                 label: 'Master encryption password set',  optional: false },
+    { done: drillPassed,                       label: 'Restore drill completed',         optional: false },
   ];
 
   return (
@@ -95,7 +120,7 @@ export function Dashboard() {
         <ReadinessBadge readiness={readiness?.readiness} />
       </div>
 
-      {/* Master password setup gate — must appear before anything else that requires Kopia */}
+      {/* Master password setup gate */}
       {!masterPasswordSet && (
         <div className="flex items-center justify-between gap-4 p-4 rounded-lg border border-amber-500/30 bg-amber-500/5">
           <div className="flex items-start gap-3">
@@ -178,14 +203,37 @@ export function Dashboard() {
             <div className="text-xs text-slate-500 mt-0.5">{kopiaStatusLabel(repo.status)}</div>
           </div>
         </div>
-        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 flex items-start gap-3">
-          <div className="p-2 rounded-lg flex-shrink-0 bg-sky-500/10 text-sky-400"><Activity size={16} /></div>
+
+        <div className={`bg-slate-900 border rounded-lg p-4 flex items-start gap-3 ${
+          remoteStatusOk ? 'border-emerald-800/40' : hasSftpConfig ? 'border-amber-800/30' : 'border-slate-800'
+        }`}>
+          <div className={`p-2 rounded-lg flex-shrink-0 ${
+            remoteStatusOk ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-700/50 text-slate-400'
+          }`}><Server size={16} /></div>
           <div className="min-w-0">
-            <div className="text-sm font-bold text-slate-100 truncate">{syncAgo}</div>
-            <div className="text-xs text-slate-400 mt-0.5">Last Sync</div>
-            <div className="text-xs text-slate-500 mt-0.5">{syncthingStateLabel(sync.state)}</div>
+            <div className="text-sm font-bold text-slate-100 truncate">
+              {remoteTargetLabel(remote.status)}
+            </div>
+            <div className="text-xs text-slate-400 mt-0.5">Remote SFTP Target</div>
+            {hasSftpConfig && !remoteStatusOk && (
+              <button
+                onClick={() => navigate('/peer-storage')}
+                className="text-xs text-sky-400 hover:text-sky-300 mt-0.5 flex items-center gap-0.5"
+              >
+                Connect → <ChevronRight size={10} />
+              </button>
+            )}
+            {!hasSftpConfig && (
+              <button
+                onClick={() => navigate('/setup')}
+                className="text-xs text-slate-600 hover:text-sky-400 mt-0.5 flex items-center gap-0.5"
+              >
+                Configure in wizard <ChevronRight size={10} />
+              </button>
+            )}
           </div>
         </div>
+
         <div className={`bg-slate-900 border rounded-lg p-4 flex items-start gap-3 ${drillPassed ? 'border-emerald-800/50' : 'border-slate-800'}`}>
           <div className={`p-2 rounded-lg flex-shrink-0 ${drillPassed ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
             <RotateCcw size={16} />
@@ -201,6 +249,7 @@ export function Dashboard() {
             }
           </div>
         </div>
+
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-4 flex items-start gap-3">
           <div className="p-2 rounded-lg flex-shrink-0 bg-slate-700/50 text-slate-400"><Shield size={16} /></div>
           <div>
@@ -223,16 +272,16 @@ export function Dashboard() {
             <ToolBadge status={toolStatus.kopia} />
           </div>
           <div className="flex items-center justify-between text-sm">
-            <span className="text-slate-300">Syncthing (transport)</span>
-            <ToolBadge status={toolStatus.syncthing} />
+            <span className="text-slate-400 italic">Syncthing (optional legacy mirror)</span>
+            <ToolBadge status={toolStatus.syncthing} label="not required for SFTP path" />
           </div>
         </div>
         <p className="text-xs text-slate-600 mt-2">
           {toolStatus.kopia === 'missing'
-            ? 'Tools not found on PATH. Install kopia and syncthing, or run via Tauri for bundled binaries.'
+            ? 'Kopia not found. Install it or run via Tauri for bundled binary.'
             : toolStatus.kopia === 'present'
-            ? 'Tools found on PATH but not checksum-verified. Checksum verification requires bundled manifest.'
-            : 'Tools detected and verified.'}
+            ? 'Kopia found on PATH — unverified (no checksum). Bundled manifest required for production.'
+            : 'Kopia verified against bundled manifest.'}
         </p>
       </div>
 
@@ -240,16 +289,16 @@ export function Dashboard() {
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
         <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Setup Checklist</h3>
         <div className="space-y-1.5">
-          {setupChecks.map(({ done, label }) => (
-            <CheckRow key={label} done={done} label={label} />
+          {setupChecks.map(({ done, label, optional }) => (
+            <CheckRow key={label} done={done} label={label} optional={optional} />
           ))}
         </div>
         <div className="mt-3 pt-3 border-t border-slate-800/60 flex items-center justify-between">
           <span className="text-xs text-slate-500">
-            {setupChecks.filter(c => c.done).length} / {setupChecks.length} checks pass
+            {setupChecks.filter(c => c.done).length} / {setupChecks.filter(c => !c.optional).length} required checks pass
           </span>
           <span className="text-xs text-slate-500">
-            Peer: {sync.peer_device_id ?? '—'} {sync.peer_connected ? '· online' : '· offline'}
+            Remote: {healthReport.remote_target_status}
           </span>
         </div>
       </div>

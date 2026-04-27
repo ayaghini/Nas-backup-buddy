@@ -6,6 +6,21 @@
 
 use nasbb_core::commands::{KopiaPlanner, SyncthingPlanner};
 use nasbb_core::config::{validate_config, NasbbConfig};
+use nasbb_core::host_setup::{
+    generate_authorize_owner_key_steps_linux, generate_authorize_owner_key_steps_macos,
+    generate_host_setup_plan_linux, generate_host_setup_plan_macos,
+    validate_host_setup, validate_hosted_path_isolation,
+    HostSetupInput, HostSetupPlan, HostSetupStep,
+};
+use nasbb_core::overlay::{
+    compatibility_matrix, detect_overlay_tools,
+    get_tailscale_detail as core_get_tailscale_detail,
+    headscale_setup_guide,
+    overlay_verify_steps, tailscale_setup_guide, wireguard_setup_guide,
+    CompatibilityEntry, OverlayConfig, OverlayDetectionResult,
+    OverlayProvider, OverlayVerifyStep, TailscaleConnectResult, TailscaleDetail,
+    TailscalePingResult, validate_overlay_config,
+};
 use nasbb_core::health::{HealthLevel, HealthReport, RestoreDrillResult};
 use nasbb_core::integration::{
     BackupEngine, ClientSetupState, IntegrationCheckResult, KopiaRepositoryState,
@@ -1233,12 +1248,16 @@ fn get_health_report(state: tauri::State<AppTestLabState>) -> HealthReport {
 
     HealthReport {
         last_backup_age_hours: backup_age_hours,
-        last_sync_age_hours: -1.0,   // Syncthing not configured in test lab → not-applicable sentinel
+        last_sync_age_hours: -1.0, // Syncthing not configured in test lab → not-applicable sentinel
         free_quota_percent: 100.0,
         restore_drill_age_days: drill_age_days,
-        peer_offline_hours: -1.0,   // No peer in test lab → not-applicable sentinel
+        peer_offline_hours: -1.0, // No peer in test lab → not-applicable sentinel
         repository_check_ok: repo_check_ok,
         repository_check_message: repo_check_message,
+        // Remote SFTP target is not configured in the local generated-data test lab.
+        // "not_configured" does not escalate to Critical — it is a valid local-only state.
+        remote_target_status: "not_configured".to_string(),
+        remote_target_last_ok_hours: -1.0,
     }
 }
 
@@ -1334,6 +1353,199 @@ fn initialize_kopia_repository(
     }
 }
 
+// ── SFTP remote target commands ───────────────────────────────────────────────
+
+/// Result of a remote SFTP target reachability probe.
+#[derive(Debug, Serialize)]
+pub struct RemoteTargetProbeResponse {
+    pub status: String,
+    /// Probe method used: "tcp_connect" (current) or "ssh_handshake" (future).
+    /// TCP connect does NOT verify SSH/SFTP authentication.
+    pub method: String,
+    pub latency_ms: Option<u64>,
+    pub message: String,
+}
+
+/// Result of initialising a remote SFTP Kopia repository.
+#[derive(Debug, Serialize)]
+pub struct SftpRepositoryInitResult {
+    pub initialized: bool,
+    pub already_existed: bool,
+    /// Human-readable status — host/user/path are never included.
+    pub message: String,
+}
+
+/// Probe whether the SFTP host is reachable on the overlay network.
+///
+/// Current method: TCP connect only — verifies port is open on the overlay network.
+/// Does NOT perform SSH/SFTP handshake or authentication.
+/// A `reachable` status means TCP port is open; SSH auth is not verified.
+/// No secrets are used or transmitted. Host address is never logged.
+#[tauri::command]
+fn probe_remote_target(host: String, port: u16) -> RemoteTargetProbeResponse {
+    use nasbb_core::remote_target::{probe_tcp_reachability, ProbeMethod};
+    let result = probe_tcp_reachability(&host, port);
+    let status = match &result.status {
+        nasbb_core::remote_target::RemoteTargetStatus::NotConfigured => "not_configured",
+        nasbb_core::remote_target::RemoteTargetStatus::Reachable => "tcp_port_reachable",
+        nasbb_core::remote_target::RemoteTargetStatus::AuthFailed => "auth_failed",
+        nasbb_core::remote_target::RemoteTargetStatus::Unreachable => "unreachable",
+        nasbb_core::remote_target::RemoteTargetStatus::HostKeyMismatch => "host_key_mismatch",
+        nasbb_core::remote_target::RemoteTargetStatus::QuotaWarning => "quota_warning",
+        nasbb_core::remote_target::RemoteTargetStatus::Error => "error",
+    };
+    let method = match &result.method {
+        ProbeMethod::TcpConnect => "tcp_connect",
+        ProbeMethod::SshHandshake => "ssh_handshake",
+    };
+    RemoteTargetProbeResponse {
+        status: status.to_string(),
+        method: method.to_string(),
+        latency_ms: result.latency_ms,
+        message: result.message,
+    }
+}
+
+/// Return the planned Kopia SFTP command sequence for display.
+/// All SFTP parameters are redacted in display strings.
+#[tauri::command]
+fn plan_kopia_sftp_repository(
+    host: String,
+    sftp_user: String,
+    sftp_path: String,
+    sftp_port: u16,
+    engine_path: String,
+) -> Vec<CommandPlanSummary> {
+    let planner = KopiaPlanner::new(engine_path);
+    vec![
+        CommandPlanSummary {
+            label: "Detect version".to_string(),
+            display_command: planner.detect_version().display_command,
+        },
+        CommandPlanSummary {
+            label: "Create SFTP repository".to_string(),
+            display_command: planner
+                .create_sftp_repository(&host, &sftp_user, &sftp_path, sftp_port)
+                .display_command,
+        },
+        CommandPlanSummary {
+            label: "Repository verification".to_string(),
+            display_command: planner.check_repository().display_command,
+        },
+        CommandPlanSummary {
+            label: "Create snapshot".to_string(),
+            display_command: planner.create_snapshot("[source-folder]").display_command,
+        },
+    ]
+}
+
+/// Build a `KopiaRunner` for an SFTP remote repository.
+///
+/// Each distinct SFTP target (different host, port, username, or remote path) gets its
+/// own isolated Kopia config file derived from a stable, non-secret target ID. This
+/// prevents one peer's config from being silently reused for a different peer.
+///
+/// Config ID is a 24-char hex derived from SHA-256(normalize(host:port:user:path)).
+/// The filename is `kopia/sftp-{id}.json`. The host, username, and path are never
+/// included in the filename.
+fn user_kopia_runner_sftp(
+    app: &tauri::AppHandle,
+    sftp: &nasbb_core::kopia::SftpRepoTarget,
+) -> Result<(nasbb_core::kopia::KopiaRunner, nasbb_core::kopia::SftpRepoTarget), String> {
+    use tauri::Manager;
+    let manifest = parse_manifest_json();
+    let platform = current_platform();
+    let resource_dir = app.path().resource_dir().ok();
+    let binary = require_kopia_binary(&manifest, &platform, resource_dir.as_deref())?;
+
+    // Derive a stable, non-secret config ID from the normalized SFTP target params.
+    // Different targets → different config paths. Same target → same config path.
+    let target_id = sftp.config_id();
+    let config_path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Cannot resolve app data dir: {e}"))?
+        .join("kopia")
+        .join(format!("sftp-{target_id}.json"));
+
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create kopia config dir: {e}"))?;
+    }
+    // For SFTP runner, repo_path is unused (path is carried by SftpRepoTarget).
+    let runner = nasbb_core::kopia::KopiaRunner::new(binary, "", config_path);
+    Ok((runner, sftp.clone()))
+}
+
+/// Create or connect to a Kopia SFTP repository on the peer's storage host.
+///
+/// - Config file absent → `repository create sftp` (creates a new encrypted repository).
+/// - Config file present → already connected; skips re-creation.
+///
+/// The repository encryption password comes from KopiaPasswordState (never the UI).
+/// SSH key authentication uses the `ssh_key_path` parameter (filesystem path to key file).
+/// The host, user, and path are never logged or returned.
+#[tauri::command]
+fn initialize_kopia_sftp_repository(
+    app: tauri::AppHandle,
+    host: String,
+    sftp_user: String,
+    sftp_path: String,
+    sftp_port: u16,
+    ssh_key_path: Option<String>,
+    kopia_pw: tauri::State<KopiaPasswordState>,
+) -> Result<SftpRepositoryInitResult, String> {
+    let password = kopia_pw
+        .0
+        .lock()
+        .map_err(|_| "state lock error")?
+        .clone()
+        .ok_or("No backup password set — go to Recovery Key page first")?;
+
+    let sftp_target = nasbb_core::kopia::SftpRepoTarget {
+        host: host.clone(),
+        port: sftp_port,
+        username: sftp_user.clone(),
+        path: sftp_path.clone(),
+        key_path: ssh_key_path,
+    };
+    let (runner, target) = user_kopia_runner_sftp(&app, &sftp_target)?;
+
+    // If config file already exists, the repository is connected — skip re-creation.
+    if runner.config_path.exists() {
+        return Ok(SftpRepositoryInitResult {
+            initialized: true,
+            already_existed: true,
+            message: "SFTP repository already connected from this session.".to_string(),
+        });
+    }
+
+    // Try create first; if the repository already exists on the remote side, connect instead.
+    match runner.create_sftp_repository(&target, &password) {
+        Ok(()) => Ok(SftpRepositoryInitResult {
+            initialized: true,
+            already_existed: false,
+            message: "Encrypted SFTP repository created successfully.".to_string(),
+        }),
+        Err(nasbb_core::kopia::KopiaError::RepositoryCreateFailed(msg)) => {
+            // Repository may already exist on the remote — attempt connect.
+            if msg.to_lowercase().contains("already") || msg.to_lowercase().contains("exist") {
+                runner
+                    .connect_sftp_repository(&target, &password)
+                    .map_err(|e| format!("SFTP repository connect failed: {e}"))?;
+                Ok(SftpRepositoryInitResult {
+                    initialized: true,
+                    already_existed: true,
+                    message: "Connected to existing encrypted SFTP repository.".to_string(),
+                })
+            } else {
+                Err(format!("SFTP repository creation failed: {msg}"))
+            }
+        }
+        Err(e) => Err(format!("SFTP repository creation failed: {e}")),
+    }
+}
+
 /// Back up all configured source folders to the user's real Kopia repository.
 ///
 /// Source paths cross the IPC boundary from the UI but are only used internally
@@ -1388,6 +1600,79 @@ fn run_real_backup_from_config(
 
     let log_line = redact_line(&format!(
         "backup_completed sources={source_count} snapshot_id={} timestamp={}",
+        snap.snapshot_id, snap.timestamp
+    ));
+
+    Ok(RealBackupResult {
+        success: true,
+        snapshot_id: snap.snapshot_id,
+        source_label: format!("[REDACTED — {source_count} folder(s)]"),
+        timestamp: snap.timestamp,
+        log_line,
+    })
+}
+
+/// Back up source folders to an SFTP remote repository.
+///
+/// Uses the same per-target config derived by `initialize_kopia_sftp_repository`.
+/// If the Kopia config file does not yet exist the command fails with a clear
+/// message directing the user to the Peer Storage tab to connect first.
+///
+/// The repository encryption password comes from KopiaPasswordState (never the UI).
+/// Host, user, and path are never logged or returned.
+#[tauri::command]
+fn run_real_sftp_backup_from_config(
+    app: tauri::AppHandle,
+    source_folders: Vec<String>,
+    host: String,
+    sftp_user: String,
+    sftp_path: String,
+    sftp_port: u16,
+    ssh_key_path: Option<String>,
+    kopia_pw: tauri::State<KopiaPasswordState>,
+) -> Result<RealBackupResult, String> {
+    if source_folders.is_empty() {
+        return Err("No source folders configured — complete the Setup Wizard first.".to_string());
+    }
+    let password = kopia_pw
+        .0
+        .lock()
+        .map_err(|_| "state lock error")?
+        .clone()
+        .ok_or("No backup password set — go to Recovery Key page first")?;
+
+    let sftp_target = nasbb_core::kopia::SftpRepoTarget {
+        host: host.clone(),
+        port: sftp_port,
+        username: sftp_user.clone(),
+        path: sftp_path.clone(),
+        key_path: ssh_key_path,
+    };
+    let (runner, target) = user_kopia_runner_sftp(&app, &sftp_target)?;
+
+    // Require that the repository was already connected (config file must exist).
+    // Users must run "Create / Connect SFTP Repository" in the Peer Storage tab first.
+    if !runner.config_path.exists() {
+        return Err(
+            "SFTP repository not yet connected. Open the Peer Storage tab and click \
+             'Create / Connect SFTP Repository' before running a backup."
+                .to_string(),
+        );
+    }
+
+    let source_count = source_folders.len();
+    let mut last: Option<nasbb_core::kopia::SnapshotInfo> = None;
+    for folder in &source_folders {
+        let snap = runner
+            .create_snapshot(std::path::Path::new(folder.as_str()), &password)
+            .map_err(|e| format!("Snapshot failed: {e}"))?;
+        last = Some(snap);
+    }
+    let snap = last.ok_or("Snapshot produced no output")?;
+    let _ = target; // target params used only during runner construction
+
+    let log_line = redact_line(&format!(
+        "sftp_backup_completed sources={source_count} snapshot_id={} timestamp={}",
         snap.snapshot_id, snap.timestamp
     ));
 
@@ -1611,7 +1896,6 @@ fn map_folder_state(raw: &str, bytes_pending: i64, peer_connected: bool) -> Stri
 /// so the frontend can show a clean "daemon not running" state.
 #[tauri::command]
 fn get_syncthing_live_status(app: tauri::AppHandle) -> SyncthingLiveStatus {
-    use tauri::Manager;
     let port: u16 = 8384;
     let base = format!("http://127.0.0.1:{port}");
     let not_running = SyncthingLiveStatus {
@@ -1765,8 +2049,6 @@ fn apply_syncthing_setup(
     peers: Vec<ApplySyncthingPeer>,
     assignments: Vec<ApplySyncthingAssignment>,
 ) -> Result<ApplySyncthingResult, String> {
-    use tauri::Manager;
-
     let port: u16 = 8384;
     let base = format!("http://127.0.0.1:{port}");
     let web_ui_url = base.clone();
@@ -2234,6 +2516,7 @@ fn check_syncthing_running(app: tauri::AppHandle) -> SyncthingRunStatus {
 /// Return a default mock ClientSetupState for offline/development mode.
 #[tauri::command]
 fn get_mock_setup_state() -> ClientSetupState {
+    use nasbb_core::integration::{RemoteRepositoryState, RemoteTargetState};
     ClientSetupState {
         role: nasbb_core::config::UserRole::DataOwner,
         engine: BackupEngine::Kopia,
@@ -2252,10 +2535,316 @@ fn get_mock_setup_state() -> ClientSetupState {
             last_sync_at: Some("2026-04-19T11:00:00Z".to_string()),
             bytes_pending: Some(0),
         },
+        remote_repository: RemoteRepositoryState {
+            status: RemoteTargetState::NotConfigured,
+            last_ok_hours: -1.0,
+        },
         recovery_key_confirmed: false,
         health_report_consent: false,
         offline_mode: true,
     }
+}
+
+// ── Storage-host setup commands ──────────────────────────────────────────────
+
+/// Validate host setup inputs and generate a shell command plan for the operator.
+///
+/// Returns platform-appropriate commands (Linux or macOS based on the compile target)
+/// for creating the isolated SFTP user, repository directory, authorized_keys entry,
+/// SSH configuration, and quota guidance.
+///
+/// All commands are **display-only** — no privileged execution happens here.
+/// The owner public key body is truncated in display; the full key is never logged.
+/// Paths that would identify the local machine are included only where necessary
+/// for correct command generation (e.g. user home directory).
+#[tauri::command]
+fn plan_host_setup(input: HostSetupInput, overlay_host: String) -> Result<HostSetupPlan, String> {
+    let setup = validate_host_setup(&input).map_err(|e| e.to_string())?;
+    let plan = if cfg!(target_os = "linux") {
+        generate_host_setup_plan_linux(&setup, &overlay_host)
+    } else {
+        // macOS and any other platform — use macOS plan
+        generate_host_setup_plan_macos(&setup, &overlay_host)
+    };
+    Ok(plan)
+}
+
+/// Validate that a hosted path does not overlap any source folder or existing hosted allocation.
+/// Lighter than plan_host_setup — suitable for interactive path validation as the user types.
+/// Uses canonicalization where available; falls back to lexical comparison for non-existent paths.
+#[tauri::command]
+fn validate_hosted_path(
+    hosted_path: String,
+    source_folders: Vec<String>,
+    existing_hosted_paths: Vec<String>,
+) -> Result<(), String> {
+    let src_refs: Vec<&str> = source_folders.iter().map(|s| s.as_str()).collect();
+    let existing_refs: Vec<&str> = existing_hosted_paths.iter().map(|s| s.as_str()).collect();
+    validate_hosted_path_isolation(&hosted_path, &src_refs, &existing_refs)
+        .map_err(|e| e.to_string())
+}
+
+/// Generate the steps to install an owner's SSH public key after their Access Request arrives.
+/// Called explicitly by the host after importing the Owner Access Request.
+/// Display-only — the app never runs these commands.
+#[tauri::command]
+fn generate_authorize_owner_key_plan(
+    sftp_username: String,
+    owner_public_key: String,
+    sftp_port: u16,
+) -> Result<Vec<HostSetupStep>, String> {
+    if cfg!(target_os = "linux") {
+        generate_authorize_owner_key_steps_linux(&sftp_username, &owner_public_key, sftp_port)
+    } else {
+        generate_authorize_owner_key_steps_macos(&sftp_username, &owner_public_key, sftp_port)
+    }
+    .map_err(|e| e.to_string())
+}
+
+// ── Overlay setup/detection commands ─────────────────────────────────────────
+
+/// Detect installed overlay tools (Tailscale, WireGuard) using read-only CLI probes.
+/// Never runs login/auth commands. Best-effort — never returns an error; failures
+/// are captured in each result's `message` field.
+#[tauri::command]
+fn detect_overlay() -> Vec<OverlayDetectionResult> {
+    detect_overlay_tools()
+}
+
+/// Validate an OverlayConfig (no network probe — structural checks only).
+#[tauri::command]
+fn validate_overlay(config: OverlayConfig) -> Result<(), String> {
+    validate_overlay_config(&config).map_err(|e| e.to_string())
+}
+
+/// Return read-only overlay verification steps for a given provider and peer address.
+/// Display-only — the app does not execute these commands.
+#[tauri::command]
+fn get_overlay_verify_steps(provider: OverlayProvider, peer_address: String) -> Vec<OverlayVerifyStep> {
+    overlay_verify_steps(&provider, &peer_address)
+}
+
+/// Return guided-setup steps for Tailscale.
+#[tauri::command]
+fn get_tailscale_setup_guide() -> Vec<OverlayVerifyStep> {
+    tailscale_setup_guide()
+}
+
+/// Return guided-setup steps for WireGuard.
+#[tauri::command]
+fn get_wireguard_setup_guide() -> Vec<OverlayVerifyStep> {
+    wireguard_setup_guide()
+}
+
+/// Return guided-setup steps for Headscale.
+#[tauri::command]
+fn get_headscale_setup_guide(server_url: Option<String>) -> Vec<OverlayVerifyStep> {
+    headscale_setup_guide(server_url.as_deref())
+}
+
+/// Return the overlay compatibility matrix.
+#[tauri::command]
+fn get_overlay_compatibility_matrix() -> Vec<CompatibilityEntry> {
+    compatibility_matrix()
+}
+
+/// Return rich Tailscale status: binary path, PATH status, add-to-PATH command,
+/// connected state, self IPs, MagicDNS hostname, tailnet name, peer count.
+///
+/// Never returns an error — all failures are represented in the struct fields.
+/// Safe to call repeatedly; only runs read-only CLI commands.
+#[tauri::command]
+fn get_tailscale_detail() -> TailscaleDetail {
+    core_get_tailscale_detail()
+}
+
+/// Run `tailscale ping <peer>` as an explicit user-triggered diagnostic.
+///
+/// The peer address is validated before use. Never called automatically.
+/// Returns reachability, latency, and routing path (DERP or direct).
+#[tauri::command]
+fn tailscale_ping_peer(peer: String) -> TailscalePingResult {
+    nasbb_core::overlay::ping_tailscale_peer(&peer)
+}
+
+/// Run `tailscale up` with no flags — explicit, confirmed on-demand connect.
+///
+/// Must only be called from a confirmed user action. Never run automatically.
+/// No auth keys, routes, ACLs, SSH-enable, serve/funnel flags are passed.
+/// If authentication is needed, `needs_auth` is set and the auth URL is returned.
+/// The caller should refresh `get_tailscale_detail` after this returns.
+#[tauri::command]
+fn tailscale_connect() -> TailscaleConnectResult {
+    nasbb_core::overlay::tailscale_connect()
+}
+
+// ── Owner bundle parsing ─────────────────────────────────────────────────────
+
+/// Parse an Owner Connection Bundle pasted by the data owner into Peer Storage.
+/// Returns all non-secret connection fields. Returns a user-readable error string
+/// for malformed or missing required fields — never panics.
+#[tauri::command]
+fn parse_owner_bundle(text: String) -> Result<nasbb_core::peer_bundle::PeerBundle, String> {
+    nasbb_core::peer_bundle::parse_bundle(&text).map_err(|e| e.to_string())
+}
+
+// ── Owner SSH key generation ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OwnerSshKeyResult {
+    pub match_id: String,
+    pub public_key: String,
+    pub fingerprint: String,
+    pub private_key_path_or_ref: String,
+    pub already_existed: bool,
+}
+
+fn safe_key_match_id(match_id: &str) -> Result<String, String> {
+    let trimmed = match_id.trim();
+    if trimmed.is_empty() {
+        return Err("match_id is required before generating an SSH key".to_string());
+    }
+    let first = trimmed.chars().next().unwrap();
+    if !first.is_ascii_alphabetic() {
+        return Err("match_id must start with a letter".to_string());
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("match_id may contain only letters, digits, hyphens, and underscores".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Generate or return a per-match Ed25519 SSH key.
+///
+/// The private key is written under app data and never returned. The frontend
+/// receives only the public key, fingerprint, and local private-key reference.
+#[tauri::command]
+fn generate_owner_ssh_key(
+    app: tauri::AppHandle,
+    match_id: String,
+) -> Result<OwnerSshKeyResult, String> {
+    use tauri::Manager;
+
+    let match_id = safe_key_match_id(&match_id)?;
+    let key_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Cannot resolve app data dir: {e}"))?
+        .join("ssh-keys");
+    std::fs::create_dir_all(&key_dir)
+        .map_err(|e| format!("Cannot create SSH key directory: {e}"))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&key_dir, std::fs::Permissions::from_mode(0o700));
+    }
+
+    let key_path = key_dir.join(format!("{match_id}_ed25519"));
+    let pub_path = key_path.with_extension("pub");
+    let already_existed = key_path.exists() && pub_path.exists();
+
+    if !already_existed {
+        let status = std::process::Command::new("ssh-keygen")
+            .args([
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-C",
+                &format!("nasbb-{match_id}"),
+                "-f",
+            ])
+            .arg(&key_path)
+            .status()
+            .map_err(|_| {
+                "ssh-keygen was not found. Install OpenSSH or import an existing key manually."
+                    .to_string()
+            })?;
+        if !status.success() {
+            return Err("ssh-keygen failed while creating the per-match key".to_string());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
+            let _ = std::fs::set_permissions(&pub_path, std::fs::Permissions::from_mode(0o644));
+        }
+    }
+
+    let public_key = std::fs::read_to_string(&pub_path)
+        .map_err(|e| format!("Cannot read generated public key: {e}"))?
+        .trim()
+        .to_string();
+
+    let fingerprint_out = std::process::Command::new("ssh-keygen")
+        .arg("-lf")
+        .arg(&pub_path)
+        .output()
+        .map_err(|_| "ssh-keygen was not found while fingerprinting the key".to_string())?;
+    let fingerprint = if fingerprint_out.status.success() {
+        String::from_utf8_lossy(&fingerprint_out.stdout)
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or("fingerprint unavailable")
+            .to_string()
+    } else {
+        "fingerprint unavailable".to_string()
+    };
+
+    Ok(OwnerSshKeyResult {
+        match_id,
+        public_key,
+        fingerprint,
+        private_key_path_or_ref: key_path.to_string_lossy().to_string(),
+        already_existed,
+    })
+}
+
+// ── SFTP target verification ─────────────────────────────────────────────────
+
+/// Verify the SFTP target using native libssh2 — no external `sftp` binary needed.
+///
+/// Unlike `probe_remote_target` (TCP-only), this performs a full SSH handshake,
+/// TOFU fingerprint check, public-key authentication, path existence check,
+/// write test, and statvfs quota query.
+///
+/// TOFU fingerprints are stored in `{app_data}/known_fingerprints.json`.
+/// A changed fingerprint blocks the connection and returns `host_key_mismatch`.
+///
+/// No passwords are accepted. SSH key is referenced by filesystem path only.
+/// Host, username, and remote path never appear in returned message strings.
+#[tauri::command]
+fn verify_sftp_target(
+    app: tauri::AppHandle,
+    host: String,
+    port: u16,
+    username: String,
+    remote_path: String,
+    key_path: Option<String>,
+) -> nasbb_core::sftp_verify::SftpVerifyResult {
+    use tauri::Manager;
+    // Resolve the known_fingerprints.json path from app data dir.
+    let fingerprints_path = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|d| {
+            let _ = std::fs::create_dir_all(&d);
+            d.join("known_fingerprints.json")
+        });
+
+    nasbb_core::sftp_verify::verify_sftp_target(
+        &host,
+        port,
+        &username,
+        &remote_path,
+        key_path.as_deref(),
+        fingerprints_path.as_deref(),
+    )
 }
 
 // ── App config persistence (direct file I/O) ─────────────────────────────────
@@ -2366,6 +2955,30 @@ pub fn run() {
             save_app_config,
             load_app_config,
             get_syncthing_live_status,
+            // SFTP remote target commands
+            probe_remote_target,
+            plan_kopia_sftp_repository,
+            initialize_kopia_sftp_repository,
+            run_real_sftp_backup_from_config,
+            // Storage-host setup
+            plan_host_setup,
+            validate_hosted_path,
+            generate_authorize_owner_key_plan,
+            // Overlay setup/detection
+            detect_overlay,
+            validate_overlay,
+            get_overlay_verify_steps,
+            get_tailscale_setup_guide,
+            get_wireguard_setup_guide,
+            get_headscale_setup_guide,
+            get_overlay_compatibility_matrix,
+            get_tailscale_detail,
+            tailscale_ping_peer,
+            tailscale_connect,
+            // Owner bundle and SFTP verification
+            parse_owner_bundle,
+            generate_owner_ssh_key,
+            verify_sftp_target,
         ])
         .build(tauri::generate_context!())
         .expect("error while building NAS Backup Buddy")

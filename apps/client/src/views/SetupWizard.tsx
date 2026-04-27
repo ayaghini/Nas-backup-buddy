@@ -7,15 +7,15 @@ import { useApp } from '../context/AppContext';
 import type { SetupDraftConfig, UserRole } from '../lib/types';
 import { pickDirectory, validateSetupConfig } from '../lib/tauri-bridge';
 
-type Step = 'role' | 'source-folders' | 'repository' | 'hosted-storage' | 'retention' | 'health-consent' | 'summary';
+type Step = 'role' | 'source-folders' | 'sftp-target' | 'hosted-storage' | 'retention' | 'health-consent' | 'summary';
 
-const STEPS: Step[] = ['role', 'source-folders', 'repository', 'hosted-storage', 'retention', 'health-consent', 'summary'];
+const STEPS: Step[] = ['role', 'source-folders', 'sftp-target', 'hosted-storage', 'retention', 'health-consent', 'summary'];
 
 function stepLabel(s: Step): string {
   switch (s) {
     case 'role': return 'Choose role';
     case 'source-folders': return 'Source folders';
-    case 'repository': return 'Repository location';
+    case 'sftp-target': return 'Peer SFTP target';
     case 'hosted-storage': return 'Hosted storage';
     case 'retention': return 'Retention policy';
     case 'health-consent': return 'Health reporting';
@@ -44,21 +44,25 @@ const INITIAL_DRAFT: SetupDraftConfig = {
   health_report_consent: false,
   pairing_token_ref: null,
   web_api_url: null,
+  // Remote SFTP repository target (default v1 backup path)
+  overlay_host: '',
+  sftp_user: '',
+  sftp_port: 22,
+  sftp_path: '',
+  ssh_key_ref: '',
+  sftp_configured: false,
 };
 
 function safetyCheck(draft: SetupDraftConfig): string[] {
   const errors: string[] = [];
   if (isOwnerRole(draft.role)) {
     if (draft.source_folders.length === 0) errors.push('At least one source folder is required.');
-    if (!draft.repository_path) errors.push('Encrypted repository path is required.');
-    if (draft.repository_path && draft.source_folders.some(s => s === draft.repository_path))
-      errors.push('Repository path must not equal a source folder.');
-    if (draft.repository_path && draft.source_folders.some(s => draft.repository_path.startsWith(s + '/')))
-      errors.push('Repository path must not be inside a source folder.');
-    if (draft.repository_path && draft.source_folders.some(s => s.startsWith(draft.repository_path + '/')))
-      errors.push('Source folder must not be inside the repository path.');
-    if (draft.repository_path && draft.source_folders.some(s => s === draft.repository_path))
-      errors.push('Source path must not be used as a Syncthing shared folder — only the repository path is allowed.');
+    // Default v1 path: require SFTP target fields for data owners.
+    if (!draft.overlay_host.trim()) errors.push('Overlay host is required (Tailscale, Headscale, or WireGuard address).');
+    if (!draft.sftp_user.trim()) errors.push('SFTP username is required.');
+    if (!draft.sftp_path.trim()) errors.push('SFTP remote path is required.');
+    if (draft.sftp_path && draft.source_folders.some(s => s === draft.sftp_path))
+      errors.push('SFTP remote path must not match a local source folder.');
   }
   if (isHostRole(draft.role)) {
     if (!draft.hosted_storage_path) errors.push('Hosted peer-storage path is required.');
@@ -107,10 +111,28 @@ export function SetupWizard() {
     // 2. Backend validation (Rust validate_config via Tauri; no-ops gracefully in browser)
     setSaving(true);
     try {
+      // Build the remote_repository field for SFTP mode (default v1 path).
+      // Only include when owner fields are populated — host role has no remote target.
+      const remoteRepository = (isOwnerRole(draft.role) && draft.overlay_host.trim())
+        ? {
+            kind: 'sftp',
+            overlay_host: draft.overlay_host.trim(),
+            sftp_user: draft.sftp_user.trim(),
+            sftp_port: draft.sftp_port || 22,
+            sftp_path: draft.sftp_path.trim(),
+            ssh_key_ref: draft.ssh_key_ref.trim() || null,
+            known_host_mode: 'strict',
+            quota_hint_gb: null,
+          }
+        : null;
+
       await validateSetupConfig({
         role: draft.role,
         source_folders: draft.source_folders,
-        repository_path: draft.repository_path || null,
+        // Local repository path is only used for test-lab/local filesystem mode.
+        // In SFTP mode (default v1), remote_repository replaces it.
+        repository_path: remoteRepository ? null : (draft.repository_path || null),
+        remote_repository: remoteRepository,
         hosted_storage_path: draft.hosted_storage_path || null,
         hosted_quota_gb: draft.hosted_quota_gb,
         retention_keep_last: draft.retention_keep_last,
@@ -139,15 +161,13 @@ export function SetupWizard() {
       case 'source-folders':
         if (!isOwnerRole(d.role)) return [];
         return d.source_folders.length === 0 ? ['Add at least one source folder.'] : [];
-      case 'repository':
+      case 'sftp-target':
         if (!isOwnerRole(d.role)) return [];
-        if (!d.repository_path) return ['Enter the encrypted repository path.'];
-        if (d.source_folders.some(s => d.repository_path === s))
-          return ['Repository path must not be the same as a source folder.'];
-        if (d.source_folders.some(s => d.repository_path.startsWith(s + '/')))
-          return ['Repository path must not be inside a source folder.'];
-        if (d.source_folders.some(s => s.startsWith(d.repository_path + '/')))
-          return ['A source folder must not be inside the repository path.'];
+        if (!d.overlay_host.trim()) return ['Enter the peer overlay host address (Tailscale, Headscale, or WireGuard).'];
+        if (!d.sftp_user.trim()) return ['Enter the SFTP username for the isolated peer account.'];
+        if (!d.sftp_path.trim()) return ['Enter the SFTP remote path on the peer storage host.'];
+        if (d.source_folders.some(s => s === d.sftp_path))
+          return ['SFTP remote path must not match a local source folder.'];
         return [];
       case 'hosted-storage':
         if (!isHostRole(d.role)) return [];
@@ -172,8 +192,8 @@ export function SetupWizard() {
           <div className="space-y-1.5">
             <p className="text-sm text-emerald-300 font-medium">Repository configuration saved.</p>
             <p className="text-xs text-emerald-300/70">
-              If your master encryption password is already set, Kopia will initialise the repository and run the first backup automatically.
-              If not, go to <strong>Recovery Key</strong> to set it — a backup will start as soon as it's saved.
+              Next: go to <strong>Peer Storage</strong> to create or connect the encrypted SFTP repository on your peer&rsquo;s storage.
+              Then set your master password in <strong>Recovery Key</strong> if not already done — Kopia needs it to encrypt your backups.
             </p>
             {draft.health_report_consent && (
               <p className="text-xs text-sky-300/70">
@@ -234,13 +254,21 @@ export function SetupWizard() {
             onRemove={folder => setDraft(d => ({ ...d, source_folders: d.source_folders.filter(x => x !== folder) }))}
           />
         )}
-        {step === 'repository' && (
-          <RepositoryStep
+        {step === 'sftp-target' && (
+          <SftpTargetStep
             role={draft.role}
             label={draft.label}
-            value={draft.repository_path}
+            overlayHost={draft.overlay_host}
+            sftpUser={draft.sftp_user}
+            sftpPort={draft.sftp_port}
+            sftpPath={draft.sftp_path}
+            sshKeyRef={draft.ssh_key_ref}
             onLabelChange={v => setDraft(d => ({ ...d, label: v }))}
-            onChange={v => setDraft(d => ({ ...d, repository_path: v }))}
+            onOverlayHostChange={v => setDraft(d => ({ ...d, overlay_host: v }))}
+            onSftpUserChange={v => setDraft(d => ({ ...d, sftp_user: v }))}
+            onSftpPortChange={v => setDraft(d => ({ ...d, sftp_port: v }))}
+            onSftpPathChange={v => setDraft(d => ({ ...d, sftp_path: v }))}
+            onSshKeyRefChange={v => setDraft(d => ({ ...d, ssh_key_ref: v }))}
           />
         )}
         {step === 'hosted-storage' && (
@@ -288,7 +316,9 @@ export function SetupWizard() {
       <div className="flex items-start gap-2 p-3 rounded-lg border border-sky-500/10 bg-sky-500/5">
         <Info size={13} className="text-sky-400 flex-shrink-0 mt-0.5" />
         <p className="text-xs text-sky-300/70 leading-relaxed">
-          Source folders are never shared directly with peers. Syncthing transports only the encrypted repository.
+          Source folders are never shared directly with peers.
+          Kopia encrypts your data locally and writes it directly to peer SFTP storage —
+          your plaintext files never leave your machine.
         </p>
       </div>
 
@@ -317,9 +347,9 @@ export function SetupWizard() {
 
 function RoleStep({ role, onChange }: { role: UserRole; onChange: (r: UserRole) => void }) {
   const options: Array<{ value: UserRole; label: string; desc: string; icon: React.ReactNode }> = [
-    { value: 'data_owner', label: 'Data Owner', desc: 'Back up your data to an encrypted repository synced to a peer.', icon: <HardDrive size={16} /> },
-    { value: 'storage_host', label: 'Storage Host', desc: 'Offer spare storage for another user\'s encrypted repository.', icon: <Shield size={16} /> },
-    { value: 'reciprocal_match', label: 'Reciprocal Match', desc: 'Both back up your own data and host a peer\'s encrypted repository.', icon: <Users size={16} /> },
+    { value: 'data_owner', label: 'Data Owner', desc: 'Back up your data to an encrypted Kopia repository on a peer\'s SFTP storage over a private overlay network.', icon: <HardDrive size={16} /> },
+    { value: 'storage_host', label: 'Storage Host', desc: 'Offer spare storage for another user\'s encrypted repository via SFTP on a private overlay network.', icon: <Shield size={16} /> },
+    { value: 'reciprocal_match', label: 'Reciprocal Match', desc: 'Back up your own data to a peer and host that peer\'s encrypted repository on your storage.', icon: <Users size={16} /> },
   ];
   return (
     <div className="space-y-3">
@@ -384,8 +414,8 @@ function SourceFoldersStep({ role, folders, newFolder, setNewFolder, onAdd, onRe
     <div className="space-y-3">
       <h3 className="text-sm font-medium text-slate-200">Source folders</h3>
       <p className="text-xs text-slate-400 leading-relaxed">
-        These folders will be backed up by Kopia. They will never be shared directly with peers —
-        only the encrypted repository is synced via Syncthing.
+        These folders will be backed up by Kopia. They are never shared directly with peers.
+        Kopia encrypts your data locally and writes encrypted snapshots directly to peer SFTP storage.
       </p>
       <div className="flex gap-2">
         <input
@@ -430,48 +460,46 @@ function SourceFoldersStep({ role, folders, newFolder, setNewFolder, onAdd, onRe
   );
 }
 
-function RepositoryStep({ role, label, value, onLabelChange, onChange }: {
+function SftpTargetStep({
+  role, label,
+  overlayHost, sftpUser, sftpPort, sftpPath, sshKeyRef,
+  onLabelChange, onOverlayHostChange, onSftpUserChange,
+  onSftpPortChange, onSftpPathChange, onSshKeyRefChange,
+}: {
   role: UserRole;
   label: string;
-  value: string;
+  overlayHost: string;
+  sftpUser: string;
+  sftpPort: number;
+  sftpPath: string;
+  sshKeyRef: string;
   onLabelChange: (v: string) => void;
-  onChange: (v: string) => void;
+  onOverlayHostChange: (v: string) => void;
+  onSftpUserChange: (v: string) => void;
+  onSftpPortChange: (v: number) => void;
+  onSftpPathChange: (v: string) => void;
+  onSshKeyRefChange: (v: string) => void;
 }) {
-  const [browseError, setBrowseError] = useState<string | null>(null);
-  const [browsing, setBrowsing] = useState(false);
-
-  async function handleBrowse() {
-    setBrowseError(null);
-    setBrowsing(true);
-    try {
-      const folder = await pickDirectory();
-      if (folder) {
-        onChange(folder);
-      } else {
-        setBrowseError('Folder picker is available in the desktop app. You can still paste a path manually.');
-      }
-    } catch (e: unknown) {
-      setBrowseError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBrowsing(false);
-    }
-  }
-
   if (!isOwnerRole(role)) {
     return (
       <div className="flex items-start gap-2.5 p-3 rounded-lg border border-sky-500/20 bg-sky-500/5">
         <Info size={13} className="text-sky-400 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-sky-300/80">Repository path is not required for the Storage Host role. Skip this step.</p>
+        <p className="text-xs text-sky-300/80">SFTP peer storage is not required for the Storage Host role. Skip this step.</p>
       </div>
     );
   }
   return (
-    <div className="space-y-3">
-      <h3 className="text-sm font-medium text-slate-200">Encrypted repository</h3>
-      <p className="text-xs text-slate-400 leading-relaxed">
-        Give this backup job a name, then choose where Kopia will write encrypted snapshots.
-        This path — not your source folders — is what gets synced to your peer via Syncthing.
-      </p>
+    <div className="space-y-4">
+      <h3 className="text-sm font-medium text-slate-200">Peer SFTP storage target</h3>
+
+      <div className="flex items-start gap-2 p-2.5 rounded border border-sky-500/15 bg-sky-500/5 text-xs text-sky-300/80">
+        <Shield size={12} className="text-sky-400 flex-shrink-0 mt-0.5" />
+        <p>
+          Kopia encrypts your data locally and writes it directly to your peer&rsquo;s SFTP storage
+          over a private overlay network. Your plaintext data never leaves your machine.
+          The peer receives only encrypted blobs.
+        </p>
+      </div>
 
       <div>
         <label className="text-xs text-slate-400 mb-1 block">Backup job name</label>
@@ -482,37 +510,80 @@ function RepositoryStep({ role, label, value, onLabelChange, onChange }: {
           placeholder="e.g. Home documents, Photos, Work projects"
           className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
         />
-        <p className="text-xs text-slate-600 mt-1">Used as the display name in Backup Plan and Syncthing setup.</p>
+        <p className="text-xs text-slate-600 mt-1">Used as the display name in Backup Plan.</p>
       </div>
-      <div className="flex items-center gap-2.5 p-2.5 rounded border border-amber-500/20 bg-amber-500/5">
-        <AlertTriangle size={13} className="text-amber-400 flex-shrink-0" />
-        <p className="text-xs text-amber-300/80">Must not be inside a source folder, and source folders must not be inside it.</p>
+
+      <div className="grid grid-cols-3 gap-3">
+        <div className="col-span-2">
+          <label className="text-xs text-slate-400 mb-1 block">Overlay host / address</label>
+          <input
+            type="text"
+            value={overlayHost}
+            onChange={e => onOverlayHostChange(e.target.value)}
+            placeholder="peer-name.tailnet.example or 100.x.x.x"
+            className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+          />
+          <p className="text-xs text-slate-600 mt-1">Tailscale, Headscale, or WireGuard address.</p>
+        </div>
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">SFTP port</label>
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={sftpPort}
+            onChange={e => onSftpPortChange(parseInt(e.target.value, 10) || 22)}
+            className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-sky-500"
+          />
+        </div>
       </div>
-      <div className="flex gap-2">
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">SFTP username</label>
+          <input
+            type="text"
+            value={sftpUser}
+            onChange={e => onSftpUserChange(e.target.value)}
+            placeholder="nasbb-match-1"
+            className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+          />
+          <p className="text-xs text-slate-600 mt-1">Isolated account on the peer host.</p>
+        </div>
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">SFTP remote path</label>
+          <input
+            type="text"
+            value={sftpPath}
+            onChange={e => onSftpPathChange(e.target.value)}
+            placeholder="/srv/nasbb/matches/match-1/repo"
+            className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+          />
+          <p className="text-xs text-slate-600 mt-1">Quota-bound path on the peer.</p>
+        </div>
+      </div>
+
+      <div>
+        <label className="text-xs text-slate-400 mb-1 block">SSH key reference (optional)</label>
         <input
           type="text"
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder="/home/user/.nasbb-repo"
-          className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+          value={sshKeyRef}
+          onChange={e => onSshKeyRefChange(e.target.value)}
+          placeholder="/home/user/.ssh/id_ed25519  or  keychain:nasbb/sftp-match-1"
+          className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
         />
-        <button
-          type="button"
-          onClick={handleBrowse}
-          disabled={browsing}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm text-slate-200 rounded transition-colors"
-          title="Choose encrypted repository folder"
-        >
-          <FolderOpen size={14} />
-          {browsing ? 'Opening' : 'Browse'}
-        </button>
+        <p className="text-xs text-slate-600 mt-1">
+          Path to your SSH private key file, or a keychain reference. Leave blank to use the SSH agent.
+          The key is read locally — never sent to any server or included in logs.
+        </p>
       </div>
-      {browseError && (
-        <p className="text-xs text-amber-300/80">{browseError}</p>
-      )}
-      <div className="flex items-start gap-2 p-2.5 rounded border border-sky-500/10 bg-sky-500/5">
-        <Lock size={12} className="text-sky-400 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-sky-300/70">This path will become the Syncthing shared folder. Your source folders will never be shared.</p>
+
+      <div className="flex items-start gap-2 p-2.5 rounded border border-amber-500/15 bg-amber-500/5">
+        <Lock size={12} className="text-amber-400 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-amber-300/70">
+          Enter the address and credentials your peer gave you for this match.
+          You will create or connect the Kopia repository in the <strong>Peer Storage</strong> tab after completing this wizard.
+        </p>
       </div>
     </div>
   );
@@ -629,10 +700,18 @@ function HealthConsentStep({ consent, onChange }: { consent: boolean; onChange: 
 
 function SummaryStep({ draft }: { draft: SetupDraftConfig }) {
   const clientErrors = safetyCheck(draft);
+  const hasSftp = draft.overlay_host.trim() !== '';
   const rows: Array<[string, string]> = [
     ['Role', draft.role.replace(/_/g, ' ')],
+    ['Backup job name', draft.label || '(none)'],
     ['Source folders', draft.source_folders.length > 0 ? `${draft.source_folders.length} folder(s) — paths local only` : 'None'],
-    ['Repository', draft.repository_path ? '[configured — path local only]' : 'Not set'],
+    ...(hasSftp ? [
+      ['Overlay host', '[configured — not displayed for privacy]'] as [string, string],
+      ['SFTP user', '[configured — not displayed for privacy]'] as [string, string],
+      ['SFTP port', String(draft.sftp_port || 22)] as [string, string],
+      ['SFTP path', '[configured — not displayed for privacy]'] as [string, string],
+      ['SSH key ref', draft.ssh_key_ref ? '[configured]' : 'Not set (SSH agent)'] as [string, string],
+    ] : []),
     ['Hosted storage', draft.hosted_storage_path ? '[configured — path local only]' : 'Not set'],
     ['Hosted quota', draft.hosted_quota_gb > 0 ? `${draft.hosted_quota_gb} GB` : 'Not set'],
     ['Retention keep_last', String(draft.retention_keep_last)],

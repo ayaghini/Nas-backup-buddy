@@ -126,7 +126,7 @@ Minimum scaffold requirements:
   - Dashboard
   - Setup wizard
   - Backup plan
-  - Syncthing connection
+  - Peer storage / SFTP connection
   - Restore drill
   - Health checks
   - Logs with redaction
@@ -192,4 +192,3 @@ When done, summarize:
 - Commands run and results.
 - Any remaining gaps or blocked items.
 ```
-

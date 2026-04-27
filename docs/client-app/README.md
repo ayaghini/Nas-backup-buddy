@@ -12,9 +12,10 @@ Locked v1 decisions:
 - Tauri + React + TypeScript for the desktop shell.
 - Rust owns local service logic, tool execution, config validation, health state, and secret boundaries.
 - Open source under AGPL-3.0.
-- Bundled and managed Kopia and Syncthing with pinned versions.
+- Bundled and managed Kopia with pinned versions.
 - Kopia is the default backup engine.
-- Syncthing is transport only.
+- Default v1 transport/storage target is Kopia over SFTP on a private overlay network.
+- Syncthing is optional/future mirror mode, not the default v1 path.
 - The app pairs with the web app, but it must work in mock/offline mode until the web API is real.
 
 ## Current Prototype State
@@ -29,7 +30,7 @@ The client has moved beyond the original mock-only scaffold. The current app can
 - Restore the canary file and compare SHA-256 checksums.
 - Build a health report from actual backup, verification, and restore-drill outcomes.
 
-The current Syncthing work is still safety and configuration oriented. The client validates that transport folders are encrypted repository folders, rejects source-folder sharing, and produces redacted transport configuration. It does not yet manage a live Syncthing daemon, poll Syncthing REST status, or prove two-machine replication.
+The current Syncthing work is legacy safety/configuration work from the earlier transport direction. The next implementation target is Kopia SFTP repository creation/connection, overlay reachability checks, and host-side SFTP target validation.
 
 Mock/browser fallback remains useful for UI development without Tauri, but it is no longer the main client-readiness signal.
 
@@ -40,7 +41,7 @@ Primary users:
 - Homelab operators.
 - NAS owners.
 - Self-hosters.
-- Users comfortable with backups, but not necessarily with manually wiring Kopia and Syncthing together.
+- Users comfortable with backups, but not necessarily with manually wiring Kopia, SSH/SFTP, and overlay networking together.
 
 The first version is not for general consumers who expect fully managed cloud backup.
 
@@ -58,14 +59,14 @@ Headless Docker/NAS deployment remains important, but the first real client app 
 
 ### Data Owner
 
-The user backs up their own data to encrypted local repository data that is then replicated to a storage host.
+The user backs up their own data directly to an encrypted Kopia repository on a matched peer's SFTP storage target.
 
 The client must help them:
 
 - Select source folders.
-- Create an encrypted Kopia repository.
+- Create or connect an encrypted Kopia SFTP repository.
 - Confirm their recovery password/key is saved outside the platform.
-- Configure Syncthing to replicate only the encrypted repository.
+- Configure private overlay and SFTP target details.
 - Run restore drills.
 - Report health metadata.
 
@@ -89,21 +90,21 @@ The client must keep owner and host responsibilities visibly separate so a user 
 
 ## Non-Negotiable Safety Rules
 
-- Never sync a live source folder directly to an untrusted peer.
+- Never expose a live source folder directly to an untrusted peer.
 - Never upload backup passwords, private keys, plaintext file names, file contents, or full local source paths.
 - Never mark a match Protected before a restore drill succeeds.
 - Never allow a failed restore drill or canary mismatch to remain only local UI state.
-- Never treat Syncthing as the backup engine.
-- Never continue silently after a backup, sync, repository verification, or restore failure.
+- Never treat Syncthing as the backup engine or default transport.
+- Never continue silently after a backup, remote target, repository verification, or restore failure.
 
 ## V1 Responsibilities
 
 The client app should:
 
-- Manage bundled Kopia and Syncthing binaries.
+- Manage bundled Kopia.
 - Validate safe folder layout.
-- Create and check encrypted Kopia repositories.
-- Configure Syncthing folder replication for encrypted repositories only.
+- Create and check encrypted Kopia SFTP repositories.
+- Validate private overlay and SFTP target reachability.
 - Run backups and repository verification.
 - Run checksum-based canary restore drills.
 - Redact logs before display or reporting.

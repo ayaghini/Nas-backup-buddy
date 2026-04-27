@@ -13,13 +13,21 @@ pub enum HealthLevel {
     Critical,
 }
 
+fn default_remote_target_status() -> String {
+    "not_configured".to_string()
+}
+fn default_neg_one() -> f64 {
+    -1.0
+}
+
 /// Structured health report emitted by the local service.
 /// Only allowlisted fields — no passwords, paths, or file names.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthReport {
     /// Hours since the last successful Kopia snapshot completed.
     pub last_backup_age_hours: f64,
-    /// Hours since the last successful Syncthing sync.
+    /// Hours since the last successful Syncthing sync (legacy mirror mode only).
+    /// Negative value means Syncthing is not configured — not a failure.
     pub last_sync_age_hours: f64,
     /// Percentage of peer quota remaining (0–100).
     pub free_quota_percent: f64,
@@ -31,6 +39,17 @@ pub struct HealthReport {
     pub repository_check_ok: bool,
     /// Optional message from repository verification (tool output summary, no paths).
     pub repository_check_message: Option<String>,
+    /// Status of the remote SFTP repository target (default v1 backup path).
+    /// Values: "not_configured" | "reachable" | "unreachable" | "auth_failed" |
+    ///         "host_key_mismatch" | "quota_warning" | "error"
+    /// "not_configured" in local test-lab mode is not a failure.
+    #[serde(default = "default_remote_target_status")]
+    pub remote_target_status: String,
+    /// Hours since the remote target was last successfully reached.
+    /// -1.0 = not configured or never connected.
+    /// Used to escalate `unreachable` from Ok → Warning (>24h) → Critical (>72h).
+    #[serde(default = "default_neg_one")]
+    pub remote_target_last_ok_hours: f64,
 }
 
 impl HealthReport {
@@ -100,6 +119,39 @@ impl HealthReport {
         }
     }
 
+    /// Health level for the remote SFTP repository target.
+    ///
+    /// - `not_configured`: Ok — valid in local test-lab mode.
+    /// - `reachable`: Ok.
+    /// - `quota_warning`: Warning.
+    /// - `auth_failed`, `host_key_mismatch`: Critical.
+    /// - `unreachable`: escalates based on `remote_target_last_ok_hours`:
+    ///   ≤ 24h → Ok, 24–72h → Warning, > 72h or never connected → Critical.
+    /// - `error`: Warning.
+    pub fn remote_target_level(&self) -> HealthLevel {
+        match self.remote_target_status.as_str() {
+            "not_configured" => HealthLevel::Ok,
+            "reachable" => HealthLevel::Ok,
+            "quota_warning" => HealthLevel::Warning,
+            "auth_failed" | "host_key_mismatch" => HealthLevel::Critical,
+            "unreachable" => {
+                let hrs = self.remote_target_last_ok_hours;
+                if hrs < 0.0 {
+                    // Never successfully connected to a configured target.
+                    HealthLevel::Warning
+                } else if hrs > 72.0 {
+                    HealthLevel::Critical
+                } else if hrs > 24.0 {
+                    HealthLevel::Warning
+                } else {
+                    HealthLevel::Ok
+                }
+            }
+            "error" => HealthLevel::Warning,
+            _ => HealthLevel::Ok,
+        }
+    }
+
     /// Overall level is the worst of all individual levels.
     pub fn overall_level(&self) -> HealthLevel {
         let levels = [
@@ -109,6 +161,7 @@ impl HealthReport {
             self.drill_level(),
             self.peer_offline_level(),
             self.repo_check_level(),
+            self.remote_target_level(),
         ];
         if levels.iter().any(|l| *l == HealthLevel::Critical) {
             HealthLevel::Critical
@@ -150,6 +203,8 @@ mod tests {
             peer_offline_hours: 0.0,
             repository_check_ok: true,
             repository_check_message: None,
+            remote_target_status: "reachable".to_string(),
+            remote_target_last_ok_hours: 0.5,
         }
     }
 
@@ -246,6 +301,92 @@ mod tests {
         let mut r = healthy_report();
         r.repository_check_ok = false;
         assert_eq!(r.repo_check_level(), HealthLevel::Critical);
+        assert_eq!(r.overall_level(), HealthLevel::Critical);
+    }
+
+    // ── Remote target health ──────────────────────────────────────────────────
+
+    #[test]
+    fn remote_target_not_configured_is_ok() {
+        // In local test-lab mode the remote target is not configured — must not be Critical.
+        let mut r = healthy_report();
+        r.remote_target_status = "not_configured".to_string();
+        r.remote_target_last_ok_hours = -1.0;
+        assert_eq!(r.remote_target_level(), HealthLevel::Ok);
+        // Overall must not become Critical just because remote target is not configured.
+        assert_ne!(r.overall_level(), HealthLevel::Critical);
+    }
+
+    #[test]
+    fn remote_target_reachable_is_ok() {
+        let r = healthy_report(); // remote_target_status = "reachable"
+        assert_eq!(r.remote_target_level(), HealthLevel::Ok);
+    }
+
+    #[test]
+    fn remote_target_quota_warning_is_warning() {
+        let mut r = healthy_report();
+        r.remote_target_status = "quota_warning".to_string();
+        assert_eq!(r.remote_target_level(), HealthLevel::Warning);
+        assert_eq!(r.overall_level(), HealthLevel::Warning);
+    }
+
+    #[test]
+    fn remote_target_auth_failed_is_critical() {
+        let mut r = healthy_report();
+        r.remote_target_status = "auth_failed".to_string();
+        assert_eq!(r.remote_target_level(), HealthLevel::Critical);
+        assert_eq!(r.overall_level(), HealthLevel::Critical);
+    }
+
+    #[test]
+    fn remote_target_host_key_mismatch_is_critical() {
+        let mut r = healthy_report();
+        r.remote_target_status = "host_key_mismatch".to_string();
+        assert_eq!(r.remote_target_level(), HealthLevel::Critical);
+    }
+
+    #[test]
+    fn remote_target_unreachable_within_24h_is_ok() {
+        let mut r = healthy_report();
+        r.remote_target_status = "unreachable".to_string();
+        r.remote_target_last_ok_hours = 10.0; // last ok 10h ago
+        assert_eq!(r.remote_target_level(), HealthLevel::Ok);
+    }
+
+    #[test]
+    fn remote_target_unreachable_over_24h_warns() {
+        let mut r = healthy_report();
+        r.remote_target_status = "unreachable".to_string();
+        r.remote_target_last_ok_hours = 25.0;
+        assert_eq!(r.remote_target_level(), HealthLevel::Warning);
+        assert_eq!(r.overall_level(), HealthLevel::Warning);
+    }
+
+    #[test]
+    fn remote_target_unreachable_over_72h_is_critical() {
+        let mut r = healthy_report();
+        r.remote_target_status = "unreachable".to_string();
+        r.remote_target_last_ok_hours = 73.0;
+        assert_eq!(r.remote_target_level(), HealthLevel::Critical);
+        assert_eq!(r.overall_level(), HealthLevel::Critical);
+    }
+
+    #[test]
+    fn remote_target_unreachable_never_connected_warns() {
+        // Never connected to a configured remote target is a warning, not critical.
+        let mut r = healthy_report();
+        r.remote_target_status = "unreachable".to_string();
+        r.remote_target_last_ok_hours = -1.0; // never connected
+        assert_eq!(r.remote_target_level(), HealthLevel::Warning);
+    }
+
+    #[test]
+    fn restore_failure_still_critical_with_remote_target() {
+        // Existing restore failure mapping must not be weakened by adding remote target.
+        let mut r = healthy_report();
+        r.repository_check_ok = false;
+        r.remote_target_status = "reachable".to_string();
         assert_eq!(r.overall_level(), HealthLevel::Critical);
     }
 }

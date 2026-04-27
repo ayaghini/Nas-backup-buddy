@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext';
 
 const GATE_CHECKS = [
   'Backup snapshot exists',
-  'Encrypted repo synced to peer',
+  'Remote encrypted repository reachable on peer storage',
   'Restore drill completed',
   'Canary checksum matches',
   'User has recovery key / password',
@@ -13,12 +13,13 @@ const GATE_CHECKS = [
 ];
 
 const THRESHOLDS: Array<[string, string, string]> = [
-  ['Last backup age',   '> 24h → Warning',     '> 72h → Critical'],
-  ['Last sync age',     '> 24h → Warning',     '> 72h → Critical'],
-  ['Free quota',        '< 15% → Warning',     '< 5% → Critical'],
-  ['Restore drill age', '> 30 days → Warning', 'Never run / failed → Critical'],
-  ['Peer offline',      '> 24h → Warning',     '> 7 days → Critical'],
-  ['Repository verification', 'Tool warning',   'Verification failed → Critical'],
+  ['Last backup age',           '> 24h → Warning',     '> 72h → Critical'],
+  ['Remote repository target',  '> 24h unreachable → Warning', '> 72h unreachable or auth failed → Critical'],
+  ['Free quota',                '< 15% → Warning',     '< 5% → Critical'],
+  ['Restore drill age',         '> 30 days → Warning', 'Never run / failed → Critical'],
+  ['Peer offline',              '> 24h → Warning',     '> 7 days → Critical'],
+  ['Repository verification',   'Tool warning',         'Verification failed → Critical'],
+  ['Syncthing mirror (legacy)', '> 24h → Warning',     '> 72h → Critical (optional mode)'],
 ];
 
 type Level = 'ok' | 'warning' | 'critical';
@@ -42,21 +43,55 @@ function LevelBadge({ level }: { level: Level }) {
   );
 }
 
+function remoteTargetStatusLabel(status: string, lastOkHours: number): string {
+  switch (status) {
+    case 'not_configured': return 'Not configured (local mode)';
+    case 'reachable': return `Reachable (${lastOkHours < 1 ? '< 1h ago' : `${lastOkHours.toFixed(0)}h ago`})`;
+    case 'unreachable': return lastOkHours < 0 ? 'Never connected' : `Unreachable ${lastOkHours.toFixed(0)}h`;
+    case 'auth_failed': return 'Authentication failed';
+    case 'host_key_mismatch': return 'Host key mismatch';
+    case 'quota_warning': return 'Quota warning';
+    case 'error': return 'Probe error';
+    default: return status;
+  }
+}
+
 export function HealthChecks() {
   const { healthReport, setupState, wizardConfig } = useApp();
   const repo = setupState.kopia_repository;
-  const sync = setupState.syncthing_folder;
 
   function backupLevel(): Level {
     if (healthReport.last_backup_age_hours > 72) return 'critical';
     if (healthReport.last_backup_age_hours > 24) return 'warning';
     return 'ok';
   }
-  function syncLevel(): Level {
-    if (healthReport.last_sync_age_hours > 72) return 'critical';
-    if (healthReport.last_sync_age_hours > 24) return 'warning';
+
+  function remoteTargetLevel(): Level {
+    const s = healthReport.remote_target_status;
+    const hrs = healthReport.remote_target_last_ok_hours;
+    if (s === 'not_configured') return 'ok'; // local test mode
+    if (s === 'reachable') return 'ok';
+    if (s === 'quota_warning') return 'warning';
+    if (s === 'auth_failed' || s === 'host_key_mismatch') return 'critical';
+    if (s === 'unreachable') {
+      if (hrs < 0) return 'warning'; // never connected
+      if (hrs > 72) return 'critical';
+      if (hrs > 24) return 'warning';
+      return 'ok';
+    }
+    if (s === 'error') return 'warning';
     return 'ok';
   }
+
+  function syncLevel(): Level {
+    // Syncthing is optional/legacy — negative means not configured → Ok
+    const h = healthReport.last_sync_age_hours;
+    if (h < 0) return 'ok';
+    if (h > 72) return 'critical';
+    if (h > 24) return 'warning';
+    return 'ok';
+  }
+
   function quotaLevel(): Level {
     if (healthReport.free_quota_percent < 5) return 'critical';
     if (healthReport.free_quota_percent < 15) return 'warning';
@@ -68,37 +103,51 @@ export function HealthChecks() {
     return 'ok';
   }
   function peerLevel(): Level {
-    if (healthReport.peer_offline_hours > 168) return 'critical';
-    if (healthReport.peer_offline_hours > 24) return 'warning';
+    const h = healthReport.peer_offline_hours;
+    if (h < 0) return 'ok'; // not configured
+    if (h > 168) return 'critical';
+    if (h > 24) return 'warning';
     return 'ok';
   }
   function repoCheckLevel(): Level {
     return healthReport.repository_check_ok ? 'ok' : 'critical';
   }
 
-  const allLevels = [backupLevel(), syncLevel(), quotaLevel(), drillLevel(), peerLevel(), repoCheckLevel()];
-  const overallLevel: Level = allLevels.includes('critical') ? 'critical' : allLevels.includes('warning') ? 'warning' : 'ok';
+  const allLevels = [
+    backupLevel(), remoteTargetLevel(), quotaLevel(),
+    drillLevel(), peerLevel(), repoCheckLevel(),
+  ];
+  const overallLevel: Level = allLevels.includes('critical')
+    ? 'critical'
+    : allLevels.includes('warning') ? 'warning' : 'ok';
 
   const metrics: Array<[string, Level, string]> = [
     ['Last backup age', backupLevel(), `${healthReport.last_backup_age_hours.toFixed(1)}h ago`],
-    ['Last sync age', syncLevel(), `${healthReport.last_sync_age_hours.toFixed(1)}h ago`],
+    [
+      'Remote repository',
+      remoteTargetLevel(),
+      remoteTargetStatusLabel(healthReport.remote_target_status, healthReport.remote_target_last_ok_hours),
+    ],
     ['Free quota', quotaLevel(), `${healthReport.free_quota_percent.toFixed(1)}%`],
     ['Restore drill age', drillLevel(), healthReport.restore_drill_age_days < 0 ? 'Never run' : `${healthReport.restore_drill_age_days} days ago`],
-    ['Peer offline', peerLevel(), healthReport.peer_offline_hours === 0 ? 'Online' : `${healthReport.peer_offline_hours.toFixed(1)}h`],
+    ['Peer offline', peerLevel(), healthReport.peer_offline_hours < 0 ? 'No peer / local mode' : healthReport.peer_offline_hours === 0 ? 'Online' : `${healthReport.peer_offline_hours.toFixed(1)}h`],
     ['Repository verification', repoCheckLevel(), healthReport.repository_check_ok ? 'Passed' : 'FAILED'],
+    ['Syncthing mirror (legacy)', syncLevel(), healthReport.last_sync_age_hours < 0 ? 'Not configured' : `${healthReport.last_sync_age_hours.toFixed(1)}h ago`],
   ];
 
-  // drill_ok: passed (age=0) means just ran, age>0 means recent pass, age<0 means failed/never
   const drillPassed = healthReport.restore_drill_age_days >= 0 && healthReport.restore_drill_age_days <= 30;
-  const drillChecksumOk = drillPassed; // canary checksum passes if drill passed
-
-  // Determine which gate checks pass
   const retentionConfigured = wizardConfig !== null && wizardConfig.retention_keep_last >= 1;
+
+  // Remote repository reachable: reachable or not_configured (local test mode is allowed)
+  const remoteReachable =
+    healthReport.remote_target_status === 'reachable' ||
+    setupState.remote_repository.status === 'reachable';
+
   const gateStatus: boolean[] = [
     repo.snapshot_count !== null && repo.snapshot_count > 0,
-    sync.state === 'in_sync',
+    remoteReachable,
     drillPassed,
-    drillChecksumOk,
+    drillPassed,
     setupState.recovery_key_confirmed,
     retentionConfigured,
     healthReport.free_quota_percent >= 15,
@@ -122,7 +171,12 @@ export function HealthChecks() {
         <div className="space-y-0">
           {metrics.map(([label, level, value]) => (
             <div key={label} className="flex items-center justify-between py-2 border-b border-slate-800/40 last:border-0">
-              <span className="text-sm text-slate-300">{label}</span>
+              <span className="text-sm text-slate-300">
+                {label}
+                {label.includes('legacy') && (
+                  <span className="ml-2 text-xs text-amber-500/60 font-normal">(optional)</span>
+                )}
+              </span>
               <div className="flex items-center gap-2">
                 <span className={`text-xs font-mono ${levelColor(level)}`}>{value}</span>
                 <LevelBadge level={level} />

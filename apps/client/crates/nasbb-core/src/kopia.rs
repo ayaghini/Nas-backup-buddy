@@ -14,6 +14,55 @@ use thiserror::Error;
 
 use crate::redaction::redact_line;
 
+/// SFTP remote repository connection details.
+///
+/// Only non-secret values are stored here. The SSH private key is referenced
+/// by filesystem path (pointing to a key file stored outside the app) or a
+/// keychain reference resolved by the caller before passing here.
+/// `KOPIA_PASSWORD` for the repository encryption is injected via env var.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SftpRepoTarget {
+    /// Overlay network hostname or IP of the peer storage host.
+    pub host: String,
+    /// SFTP port (default 22).
+    pub port: u16,
+    /// Isolated SFTP username on the peer.
+    pub username: String,
+    /// Remote path on the peer where the encrypted repository lives.
+    pub path: String,
+    /// Path to the SSH private key file on the local machine.
+    /// When None, Kopia uses the SSH agent or default key locations.
+    pub key_path: Option<String>,
+}
+
+impl SftpRepoTarget {
+    /// Return a stable, non-secret 24-character hex identifier for this target.
+    ///
+    /// The ID is derived from a SHA-256 hash of the normalized connection
+    /// parameters (host, port, username, path). It is used as the Kopia config
+    /// file discriminator so that different SFTP targets always produce different
+    /// config files, and the same target always maps to the same config file.
+    ///
+    /// Properties:
+    /// - Different host/port/user/path → different ID (with overwhelming probability).
+    /// - Same host/port/user/path → same ID regardless of key_path or other fields.
+    /// - The ID contains no host, username, or path information.
+    /// - Pure hex digits, safe for use as a filename component.
+    pub fn config_id(&self) -> String {
+        use sha2::{Digest, Sha256};
+        // Normalize: lowercase host, canonical port, trimmed username/path, strip trailing /
+        let normalized = format!(
+            "{}:{}:{}:{}",
+            self.host.trim().to_lowercase(),
+            self.port,
+            self.username.trim(),
+            self.path.trim().trim_end_matches('/')
+        );
+        let hash = hex::encode(Sha256::digest(normalized.as_bytes()));
+        hash[..24].to_string()
+    }
+}
+
 #[derive(Debug, Error, Serialize, Deserialize)]
 pub enum KopiaError {
     #[error("kopia binary not found — ensure it is bundled or on PATH")]
@@ -157,6 +206,82 @@ impl KopiaRunner {
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             Err(KopiaError::RepositoryCreateFailed(redact_output(&stderr)))
+        }
+    }
+
+    /// Create an encrypted SFTP repository at the given remote target.
+    ///
+    /// Kopia writes the encrypted repository directly to the peer's SFTP storage.
+    /// The repository encryption password is injected via `KOPIA_PASSWORD` env var.
+    /// SSH authentication uses the key file in `target.key_path` when provided;
+    /// otherwise Kopia falls back to the SSH agent.
+    /// Host/user/path details are never logged; errors are redacted before returning.
+    pub fn create_sftp_repository(
+        &self,
+        target: &SftpRepoTarget,
+        password: &str,
+    ) -> Result<(), KopiaError> {
+        let mut cmd = self.base_cmd();
+        cmd.args([
+            "repository",
+            "create",
+            "sftp",
+            "--host",
+            &target.host,
+            "--port",
+            &target.port.to_string(),
+            "--username",
+            &target.username,
+            "--path",
+            &target.path,
+        ]);
+        if let Some(kp) = &target.key_path {
+            cmd.arg("--keyfile").arg(kp);
+        }
+        cmd.env("KOPIA_PASSWORD", password);
+
+        let output = cmd.output().map_err(|_| KopiaError::Io)?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Err(KopiaError::RepositoryCreateFailed(redact_output(&stderr)))
+        }
+    }
+
+    /// Connect to an existing SFTP repository at the given remote target.
+    ///
+    /// Identical authentication and redaction behaviour to `create_sftp_repository`.
+    pub fn connect_sftp_repository(
+        &self,
+        target: &SftpRepoTarget,
+        password: &str,
+    ) -> Result<(), KopiaError> {
+        let mut cmd = self.base_cmd();
+        cmd.args([
+            "repository",
+            "connect",
+            "sftp",
+            "--host",
+            &target.host,
+            "--port",
+            &target.port.to_string(),
+            "--username",
+            &target.username,
+            "--path",
+            &target.path,
+        ]);
+        if let Some(kp) = &target.key_path {
+            cmd.arg("--keyfile").arg(kp);
+        }
+        cmd.env("KOPIA_PASSWORD", password);
+
+        let output = cmd.output().map_err(|_| KopiaError::Io)?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Err(KopiaError::RepositoryConnectFailed(redact_output(&stderr)))
         }
     }
 
@@ -491,6 +616,127 @@ mod tests {
         // that base_cmd() does NOT add --cache-directory (rejected by 0.17.0)
         // and DOES include --config-file.
         // Smoke test with the real binary: run cargo test -- --ignored
+    }
+
+    // ── SftpRepoTarget::config_id ─────────────────────────────────────────────
+
+    fn make_target(host: &str, port: u16, user: &str, path: &str) -> SftpRepoTarget {
+        SftpRepoTarget {
+            host: host.to_string(),
+            port,
+            username: user.to_string(),
+            path: path.to_string(),
+            key_path: None,
+        }
+    }
+
+    #[test]
+    fn config_id_is_24_hex_chars() {
+        let t = make_target("peer.tailnet", 22, "nasbb-match", "/srv/repo");
+        let id = t.config_id();
+        assert_eq!(id.len(), 24);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()), "ID must be hex: {id}");
+    }
+
+    #[test]
+    fn same_target_produces_same_config_id() {
+        let a = make_target("peer.tailnet", 22, "u", "/p");
+        let b = make_target("peer.tailnet", 22, "u", "/p");
+        assert_eq!(a.config_id(), b.config_id());
+    }
+
+    #[test]
+    fn key_path_does_not_affect_config_id() {
+        let without_key = make_target("h", 22, "u", "/p");
+        let with_key = SftpRepoTarget {
+            key_path: Some("/home/user/.ssh/id_ed25519".to_string()),
+            ..without_key.clone()
+        };
+        assert_eq!(without_key.config_id(), with_key.config_id());
+    }
+
+    #[test]
+    fn different_hosts_get_different_config_ids() {
+        let a = make_target("host-a.tailnet", 22, "u", "/p");
+        let b = make_target("host-b.tailnet", 22, "u", "/p");
+        assert_ne!(a.config_id(), b.config_id());
+    }
+
+    #[test]
+    fn different_ports_get_different_config_ids() {
+        let a = make_target("h", 22, "u", "/p");
+        let b = make_target("h", 2222, "u", "/p");
+        assert_ne!(a.config_id(), b.config_id());
+    }
+
+    #[test]
+    fn different_users_get_different_config_ids() {
+        let a = make_target("h", 22, "alice", "/p");
+        let b = make_target("h", 22, "bob", "/p");
+        assert_ne!(a.config_id(), b.config_id());
+    }
+
+    #[test]
+    fn different_paths_get_different_config_ids() {
+        let a = make_target("h", 22, "u", "/srv/match-1/repo");
+        let b = make_target("h", 22, "u", "/srv/match-2/repo");
+        assert_ne!(a.config_id(), b.config_id());
+    }
+
+    #[test]
+    fn config_id_contains_no_host_user_path() {
+        let t = make_target("secret-peer.tailnet.example", 22, "alice", "/srv/nasbb/private");
+        let id = t.config_id();
+        assert!(!id.contains("secret-peer"), "ID must not contain host");
+        assert!(!id.contains("alice"), "ID must not contain username");
+        assert!(!id.contains("nasbb"), "ID must not contain path fragment");
+        assert!(!id.contains("private"), "ID must not contain path fragment");
+    }
+
+    #[test]
+    fn trailing_slash_normalized_in_config_id() {
+        let with_slash = make_target("h", 22, "u", "/srv/repo/");
+        let without_slash = make_target("h", 22, "u", "/srv/repo");
+        assert_eq!(with_slash.config_id(), without_slash.config_id());
+    }
+
+    #[test]
+    fn host_case_normalized_in_config_id() {
+        let upper = make_target("Peer.Tailnet.Example", 22, "u", "/p");
+        let lower = make_target("peer.tailnet.example", 22, "u", "/p");
+        assert_eq!(upper.config_id(), lower.config_id());
+    }
+
+    #[test]
+    fn sftp_runner_constructs_without_keyfile() {
+        let runner = KopiaRunner::new("/usr/local/bin/kopia", "/tmp/repo", "/tmp/config.json");
+        let target = SftpRepoTarget {
+            host: "peer.tailnet.example".to_string(),
+            port: 22,
+            username: "nasbb-match".to_string(),
+            path: "/srv/nasbb/repo".to_string(),
+            key_path: None,
+        };
+        // Verify struct construction is valid (no execution)
+        assert_eq!(target.port, 22);
+        assert_eq!(runner.binary_path.to_str().unwrap(), "/usr/local/bin/kopia");
+    }
+
+    #[test]
+    fn sftp_target_key_path_is_optional() {
+        let no_key = SftpRepoTarget {
+            host: "h".to_string(),
+            port: 22,
+            username: "u".to_string(),
+            path: "/p".to_string(),
+            key_path: None,
+        };
+        let with_key = SftpRepoTarget {
+            key_path: Some("/home/user/.ssh/id_ed25519".to_string()),
+            ..no_key.clone()
+        };
+        assert!(no_key.key_path.is_none());
+        assert!(with_key.key_path.is_some());
     }
 
     /// Smoke test: requires a real Kopia binary and an initialized test lab.

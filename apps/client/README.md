@@ -58,15 +58,17 @@ Rust checks are expected to pass on a machine with Rust installed.
 
 The client currently includes:
 
-- Interactive UI views for dashboard, setup, backup plan, Syncthing connection, restore drill, health checks, logs, settings, recovery key, and about/license.
-- Native folder browsing for source folders and encrypted repository paths in the setup wizard.
+- Interactive UI views for dashboard, setup wizard, backup plan, peer storage (SFTP/overlay), restore drill, health checks, logs, settings, recovery key, about/license, and Syncthing (labeled legacy/optional mirror mode).
+- Setup wizard with SFTP target step: overlay host, SFTP username, port, remote path, SSH key reference.
 - Shared React context and persistence for setup state, health state, tool status, wizard configuration, logs, and operation results.
-- Rust core modules for role-aware config validation, health threshold mapping, redaction, source-folder safety, Kopia command planning, Syncthing API planning, integration readiness, and bundled tool manifest modeling.
+- `updateRemoteRepositoryState` action in AppContext — Peer Storage probe and connect results propagate to Health Checks and Protected gate automatically.
+- Rust core modules for role-aware config validation (SFTP mode does not require local `repository_path`), health threshold mapping, redaction, source-folder safety, Kopia command planning (SFTP create/connect), overlay TCP probe, integration readiness with remote target checks, and bundled tool manifest modeling.
+- `SftpRepoTarget::config_id()` — stable 24-char SHA-256-derived per-target config discriminator. Different SFTP targets get different Kopia config files; same target always maps to the same file.
 - Real SHA-256 verification logic for bundled tool checks.
 - A bundled-tool manifest in `src-tauri/resources/tool-manifest.json`; macOS arm64 Kopia and Syncthing entries point at packaged `resources/binaries/*` paths and are filled with real checksums, while other platforms intentionally fail closed until release tooling supplies real binaries.
 - Pinned macOS arm64 Kopia and Syncthing binaries under `src-tauri/resources/binaries/`.
 - A generated-data test lab that runs real Kopia repository creation/connection, snapshot creation, `snapshot verify`, restore, and canary SHA-256 comparison.
-- Syncthing transport-folder preparation that rejects source folders and emits redacted configuration snippets without requiring a running Syncthing daemon.
+- Legacy Syncthing transport-folder preparation that rejects source folders and emits redacted configuration snippets without requiring a running Syncthing daemon. Syncthing is optional/legacy mirror mode — not the default v1 transport.
 - Browser/mock fallback backup, verification, and restore-drill flows for UI development without Tauri.
 
 ## Current Progress
@@ -75,14 +77,15 @@ The client currently includes:
 | --- | ---: | --- |
 | React/Tauri UI scaffold | `████████░░` 80% | Main views are interactive, persisted locally, and use native folder pickers where safety matters. |
 | Rust safety core | `████████░░` 80% | Config, health, redaction, tool status, command planning, and readiness models have passing Cargo checks. |
-| Kopia/Syncthing integration | `██████░░░░` 60% | Kopia has guarded generated-data execution; Syncthing has safe transport-folder preparation but no live daemon management yet. |
+| Kopia/SFTP/overlay integration | `████░░░░░░` 40% | Kopia has guarded generated-data execution; SFTP remote repository and overlay checks are next. Syncthing is legacy/optional mirror-mode work. |
 | Restore drill flow | `███████░░░` 70% | Real generated-data restore drill compares canary checksums and updates health state. Peer-held restores remain future work. |
 | Release readiness | `████░░░░░░` 40% | Manifest/resources and macOS arm64 tool inventory exist; signing, all-platform binaries, and complete license inventory remain. |
 
 ## Known Gaps
 
 - Kopia execution is currently limited to generated-data test lab flows and guarded user-repository actions; production backup scheduling is not implemented yet.
-- Syncthing execution is not wired into user actions yet. Current Syncthing work validates and prepares transport-folder configuration only.
+- SFTP remote repository execution is not wired into user actions yet.
+- Syncthing is not the default v1 transport. Current Syncthing work validates and prepares optional mirror-mode folder configuration only.
 - Only macOS arm64 Kopia and Syncthing binaries are bundled; other platform manifest entries intentionally fail closed until release tooling fills them.
 - Real web API pairing is not implemented yet.
 - OS keychain integration is not implemented yet.

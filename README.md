@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-NAS Backup Buddy is an open-source homelab project for encrypted reciprocal offsite backup. The product direction is now clear: use Kopia for encrypted, versioned backups; use Syncthing only as the peer-to-peer transport for encrypted repository data; and use the platform for matching, backup pacts, health checks, restore drills, incidents, and reputation.
+NAS Backup Buddy is an open-source homelab project for encrypted reciprocal offsite backup. The product direction is now clear: use Kopia for encrypted, versioned backups written directly to peer-hosted SFTP storage over a private overlay network; use the platform for matching, backup pacts, health checks, restore drills, incidents, and reputation; keep Syncthing as an optional/future mirror mode rather than the default transport.
 
 Current repository status:
 
@@ -10,7 +10,7 @@ Current repository status:
 - A Vite + React web prototype exists in `apps/web`.
 - A Tauri + React + Rust desktop client exists in `apps/client`, with native setup flows, local persistence, recovery-key handling, bundled-tool verification, and a generated-data Kopia test lab for real backup, `snapshot verify`, and restore-drill execution on the supported local platform.
 - The client safety model is local-first: secrets stay local, telemetry is allowlisted, and source folders must never be synced directly to peers.
-- Release foundations have started under AGPL-3.0-only, but production release readiness still requires a complete license inventory, signing, all-platform bundled tool checksums, two-machine Syncthing evidence, and security review.
+- Release foundations have started under AGPL-3.0-only, but production release readiness still requires a complete license inventory, signing, all-platform bundled tool checksums, two-machine SFTP-over-overlay restore evidence, and security review.
 
 ### Project Progress
 
@@ -20,18 +20,18 @@ Progress is estimated by usable project capability, not by lines of code. The pr
 | --- | ---: | --- | --- | --- |
 | Feasibility and product docs | `████████░░` 80% | Strong foundation | Feasibility study, architecture, implementation map, risk register, control plan, runbooks, ADRs | Keep docs updated as real POC results arrive |
 | Web coordination prototype | `██████░░░░` 60% | Usable local prototype | Dashboard, matching, pacts, health, restore drills, incidents, admin, shared mock state | Real backend, auth, persistence, API contracts, production UX pass |
-| Desktop client scaffold | `████████░░` 80% | Interactive local app verified | Tauri + React UI, shared app state, setup wizard with folder pickers, persistent local settings, recovery-key flow, backup plan, Syncthing safety view, restore drill, health checks, logs, settings, Rust checks passing | Production service lifecycle, OS keychain, more platform testing, packaging polish |
-| Backup safety controls | `████████░░` 80% | Real generated-data lab plus UI controls | Protected gate, restore failure mapping, canary mismatch handling, repository verification failure mapping, folder safety validation, telemetry consent wiring, real Kopia generated-data backup/verify/restore path | Two-machine peer restore evidence, live Syncthing health, incident submission to web app |
+| Desktop client scaffold | `████████░░` 80% | Interactive local app verified | Tauri + React UI, shared app state, setup wizard with folder pickers, persistent local settings, recovery-key flow, backup plan, legacy Syncthing safety view, restore drill, health checks, logs, settings, Rust checks passing | SFTP target setup, overlay setup, production service lifecycle, OS keychain, packaging polish |
+| Backup safety controls | `████████░░` 80% | Real generated-data lab plus UI controls | Protected gate, restore failure mapping, canary mismatch handling, repository verification failure mapping, folder safety validation, telemetry consent wiring, real Kopia generated-data backup/verify/restore path | Two-machine peer restore evidence, remote target health, incident submission to web app |
 | Release and open-source foundation | `█████░░░░░` 50% | Started | AGPL-3.0-only license, third-party notices foundation, package scaffolds, macOS arm64 tool sources/checksums recorded | Complete dependency license inventory, signing, all-platform checksums, release process |
-| Syncthing/Kopia integration | `██████░░░░` 60% | Kopia real-test path works locally | Redacted Kopia command planner, guarded Kopia execution, generated-data test lab, `snapshot verify`, restore drill, Syncthing transport-folder safety, real SHA-256 verifier, pinned macOS arm64 Kopia/Syncthing binaries | Live Syncthing daemon/API management, all-platform binaries, keychain-backed production secrets |
-| Infrastructure and backend | `█░░░░░░░░░` 10% | Future work | Syncthing discovery/relay notes, web app mock state | API, database, auth, pairing tokens, health ingestion, relay/discovery operations |
-| Real backup POC evidence | `███░░░░░░░` 30% | Single-machine generated-data Kopia lab proven | Client can create a local test lab, run Kopia snapshot, verify repository content, restore canary data, and report health from actual outcomes | Run two-machine Kopia + Syncthing trial, record results, prove restore from peer copy |
+| Kopia/SFTP/overlay integration | `████░░░░░░` 40% | Kopia real-test path works locally | Redacted Kopia command planner, guarded local Kopia execution, generated-data test lab, `snapshot verify`, restore drill, legacy Syncthing safety checks, real SHA-256 verifier | Kopia SFTP target support, overlay reachability, host quota enforcement, keychain-backed production secrets |
+| Infrastructure and backend | `█░░░░░░░░░` 10% | Future work | Web app mock state, old Syncthing discovery/relay notes | API, database, auth, pairing tokens, health ingestion, overlay bootstrap guidance |
+| Real backup POC evidence | `███░░░░░░░` 30% | Single-machine generated-data Kopia lab proven | Client can create a local test lab, run Kopia snapshot, verify repository content, restore canary data, and report health from actual outcomes | Run two-machine Kopia over SFTP/private overlay trial, record results, prove restore from peer-hosted repository |
 | Production readiness | `░░░░░░░░░░` 0% | Not production-ready | Clear safety posture and launch constraints | Security review, legal review, reliability metrics, support process, paid-marketplace controls |
 
 Next engineering priorities:
 
 - Promote the generated-data Kopia lab into a documented test gate for every client release.
-- Add live Syncthing daemon/API management and two-machine encrypted repository replication tests.
+- Add Kopia SFTP repository support, private overlay reachability checks, and two-machine restore tests.
 - Build keychain-backed secret storage for production backup passwords.
 - Connect client health reports to the web app once the API exists.
 - Keep the first launch invite-only and barter-based.
@@ -46,7 +46,7 @@ This repository starts as a docs-first project. The feasibility conclusion is:
 
 - The idea is technically feasible.
 - The safest MVP should use a real backup engine, such as Kopia or restic, to create encrypted versioned snapshots.
-- Syncthing should be treated as a transport and replication layer, not as the backup engine.
+- The safest MVP should avoid a full local encrypted repository copy by writing encrypted Kopia backups directly to peer-hosted SFTP storage over a private overlay network.
 - The first launch should be invite-only and barter-based before any paid storage marketplace is attempted.
 
 ## Repository Map
@@ -91,10 +91,10 @@ Do not promise cloud-backup reliability until the project can measure and enforc
 Recommended first stack:
 
 - Backup snapshots: Kopia first, restic as a strong alternative.
-- Encrypted peer transport: Syncthing.
+- Encrypted peer storage target: SFTP over Tailscale, Headscale, or WireGuard.
 - Coordination: self-hosted web app.
-- Discovery/relay: start with Syncthing defaults, later add private discovery and relay.
-- Local management: Tauri + Rust desktop client with bundled Kopia and Syncthing; headless Docker/NAS agent packaging can follow later.
+- Connectivity: private overlay network first; Syncthing remains optional/future mirror mode.
+- Local management: Tauri + Rust desktop client with bundled Kopia; headless Docker/NAS host packaging can follow later.
 
 ## Status
 

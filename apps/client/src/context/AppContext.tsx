@@ -21,12 +21,13 @@ import {
 import {
   getRealHealthReport,
   getSetupReadiness,
-  getSyncthingLiveStatus,
   getToolStatus,
   hasKopiaPassword,
   initializeKopiaRepository,
   loadMasterPasswordFromKeychain,
+  probeRemoteTarget,
   runRealBackupFromConfig,
+  runRealSftpBackupFromConfig,
 } from '../lib/tauri-bridge';
 import { loadPersistedConfig, savePersistedConfig } from '../lib/persistence';
 
@@ -75,6 +76,14 @@ interface AppContextValue {
   updateRealLab: (patch: Partial<RealLabState>) => void;
   refreshRealHealth: () => Promise<void>;
   refreshReadiness: () => void;
+  /**
+   * Update shared remote repository state after a probe or connect operation.
+   * Propagates to Health Checks and Protected gate automatically.
+   *
+   * @param status  The new remote target status string (e.g. 'reachable', 'unreachable').
+   * @param lastOkHours  Hours since last successful connection. 0 = just connected. -1 = never.
+   */
+  updateRemoteRepositoryState: (status: string, lastOkHours: number) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -86,7 +95,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   const [wizardConfigs, setWizardConfigs] = useState<SetupDraftConfig[]>([]);
   const [masterPasswordSet, setMasterPasswordSetState] = useState(false);
   const [repoJobStatuses, setRepoJobStatuses] = useState<Record<number, RepoJobStatus>>({});
-  const [syncthingLiveStatus, setSyncthingLiveStatus] = useState<SyncthingLiveStatus | null>(null);
+  const [syncthingLiveStatus] = useState<SyncthingLiveStatus | null>(null);
   // True once the persisted store has been loaded into state (prevents saving before loading)
   const [persistedLoaded, setPersistedLoaded] = useState(false);
   const [offlineMode, setOfflineMode] = useState(false);
@@ -136,7 +145,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
         // Derive setup state from the last wizard config so the readiness
         // check doesn't show "Kopia repository not configured" on restart.
         const last = saved.wizardConfigs[saved.wizardConfigs.length - 1];
-        if (last?.repository_path) {
+        if (last?.repository_path || last?.overlay_host) {
           setSetupState(prev => ({
             ...prev,
             role: last.role,
@@ -147,6 +156,30 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
                 : prev.kopia_repository.status,
             },
           }));
+        }
+
+        // If the last config has SFTP fields, run a lightweight TCP probe to
+        // restore remote_repository state after restart. This avoids showing
+        // "not_configured" on the dashboard when a peer is configured but the
+        // probe state was lost at shutdown.
+        const last2 = saved.wizardConfigs[saved.wizardConfigs.length - 1];
+        if (last2?.overlay_host?.trim()) {
+          const host = last2.overlay_host.trim();
+          const port = last2.sftp_port || 22;
+          probeRemoteTarget(host, port).then(result => {
+            const sharedStatus =
+              result.status === 'tcp_port_reachable' ? 'reachable' : result.status;
+            const lastOk = result.status === 'tcp_port_reachable' ? 0 : -1;
+            setSetupState(prev => ({
+              ...prev,
+              remote_repository: { status: sharedStatus as 'reachable' | 'unreachable' | 'not_configured' | 'auth_failed' | 'host_key_mismatch' | 'quota_warning' | 'error', last_ok_hours: lastOk },
+            }));
+            setHealthReport(prev => ({
+              ...prev,
+              remote_target_status: sharedStatus as typeof prev.remote_target_status,
+              remote_target_last_ok_hours: lastOk,
+            }));
+          }).catch(() => { /* probe failure is non-fatal on startup */ });
         }
       }
       if (saved.syncthingConfigured) {
@@ -172,59 +205,9 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     void savePersistedConfig({ wizardConfigs });
   }, [wizardConfigs, persistedLoaded]);
 
-  // Poll Syncthing live status every 15 s and sync it into setupState.
-  useEffect(() => {
-    let cancelled = false;
-
-    async function poll() {
-      if (cancelled) return;
-      const live = await getSyncthingLiveStatus();
-      if (cancelled) return;
-      setSyncthingLiveStatus(live);
-
-      if (live.running && live.folders.length > 0) {
-        // Derive overall SyncthingFolderStatus from the live data
-        const hasError = live.folders.some(f => f.state === 'error');
-        const hasSyncing = live.folders.some(f => f.state === 'syncing');
-        const allInSync = live.folders.every(f => f.state === 'in_sync');
-        const anyPeerConnected = live.connected_peer_ids.length > 0;
-        const totalBytesPending = live.folders.reduce((s, f) => s + f.bytes_pending, 0);
-        const isStale = live.folders.some(f => f.state === 'stale');
-
-        const derivedState = hasError ? 'error'
-          : hasSyncing ? 'syncing'
-          : allInSync ? 'in_sync'
-          : isStale ? 'stale'
-          : anyPeerConnected ? 'device_configured'
-          : 'folder_configured';
-
-        setSetupState(prev => ({
-          ...prev,
-          syncthing_folder: {
-            state: derivedState as ClientSetupState['syncthing_folder']['state'],
-            peer_device_id: live.connected_peer_ids[0] ?? prev.syncthing_folder.peer_device_id,
-            peer_connected: anyPeerConnected,
-            last_sync_at: allInSync ? new Date().toISOString() : prev.syncthing_folder.last_sync_at,
-            bytes_pending: totalBytesPending,
-          },
-        }));
-      } else if (!live.running) {
-        // Daemon stopped — preserve state but clear real-time fields
-        setSetupState(prev => ({
-          ...prev,
-          syncthing_folder: {
-            ...prev.syncthing_folder,
-            peer_connected: false,
-            bytes_pending: null,
-          },
-        }));
-      }
-    }
-
-    void poll();
-    const interval = setInterval(() => { void poll(); }, 15_000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, []);
+  // Syncthing live polling is intentionally disabled in the default v1 path.
+  // Kopia over SFTP on Tailscale is the primary transport; the Syncthing route
+  // remains available only as a developer/legacy experiment.
 
   // On mount: detect real tool status and update setup state
   useEffect(() => {
@@ -273,7 +256,11 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   const triggerRepoBackup = useCallback(async (configIndex: number) => {
     const configs = wizardConfigsRef.current;
     const config = configs[configIndex];
-    if (!config?.repository_path) return;
+
+    // Require either an SFTP target or a local repository path.
+    const isSftp = !!(config?.overlay_host?.trim());
+    const isLocal = !!(config?.repository_path);
+    if (!config || (!isSftp && !isLocal)) return;
 
     const blank: RepoJobStatus = { init_state: 'idle', backup_state: 'idle', last_snapshot_at: null, snapshot_count: 0, error: null };
 
@@ -285,27 +272,58 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
 
     setStatus({ init_state: 'running', backup_state: 'idle', error: null });
     try {
-      await initializeKopiaRepository(config.repository_path);
-      setStatus({ init_state: 'done', backup_state: 'running' });
-      const result = await runRealBackupFromConfig(config.source_folders, config.repository_path);
-      setRepoJobStatuses(prev => {
-        const current = prev[configIndex] ?? blank;
-        return {
-          ...prev,
-          [configIndex]: { ...current, backup_state: 'done', last_snapshot_at: result.timestamp, snapshot_count: current.snapshot_count + 1 },
-        };
-      });
+      if (isSftp) {
+        // SFTP path: repository must already be connected (via Peer Storage tab).
+        // Skip init step — just run the snapshot directly.
+        setStatus({ init_state: 'done', backup_state: 'running' });
+        const result = await runRealSftpBackupFromConfig(
+          config.source_folders,
+          config.overlay_host.trim(),
+          config.sftp_user.trim(),
+          config.sftp_path.trim(),
+          config.sftp_port || 22,
+          config.ssh_key_ref.trim() || null,
+        );
+        setRepoJobStatuses(prev => {
+          const current = prev[configIndex] ?? blank;
+          return {
+            ...prev,
+            [configIndex]: { ...current, backup_state: 'done', last_snapshot_at: result.timestamp, snapshot_count: current.snapshot_count + 1 },
+          };
+        });
+      } else {
+        // Local filesystem path (test lab / legacy mode)
+        await initializeKopiaRepository(config.repository_path);
+        setStatus({ init_state: 'done', backup_state: 'running' });
+        const result = await runRealBackupFromConfig(config.source_folders, config.repository_path);
+        setRepoJobStatuses(prev => {
+          const current = prev[configIndex] ?? blank;
+          return {
+            ...prev,
+            [configIndex]: { ...current, backup_state: 'done', last_snapshot_at: result.timestamp, snapshot_count: current.snapshot_count + 1 },
+          };
+        });
+      }
     } catch (e: unknown) {
       setStatus({ init_state: 'error', backup_state: 'error', error: e instanceof Error ? e.message : String(e) });
     }
   }, []);
 
   // Append the wizard draft to the list and sync role into setupState.
-  // Deduplicates by repository_path — re-running the wizard for the same path
-  // updates the existing entry rather than adding a duplicate.
+  // Deduplicates by SFTP target (overlay_host + sftp_path) when set,
+  // falling back to repository_path for legacy local-mode configs.
   const applyWizardConfig = useCallback((draft: SetupDraftConfig) => {
     setWizardConfigs(prev => {
-      const idx = prev.findIndex(c => c.repository_path === draft.repository_path);
+      // Determine the dedup key: prefer SFTP target for v1 configs
+      const draftKey = draft.overlay_host
+        ? `sftp:${draft.overlay_host.trim()}:${draft.sftp_path.trim()}`
+        : `local:${draft.repository_path}`;
+      const idx = prev.findIndex(c => {
+        const cKey = c.overlay_host
+          ? `sftp:${c.overlay_host.trim()}:${c.sftp_path.trim()}`
+          : `local:${c.repository_path}`;
+        return cKey === draftKey;
+      });
       let next: SetupDraftConfig[];
       if (idx >= 0) {
         next = [...prev];
@@ -324,10 +342,10 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     setSetupState(prev => ({
       ...prev,
       role: draft.role,
-      // Repository status resets when config changes — user needs to re-run check
+      // Repository status: configured when either local path or SFTP target is set
       kopia_repository: {
         ...prev.kopia_repository,
-        status: draft.repository_path ? 'configured' : 'not_configured',
+        status: (draft.repository_path || draft.overlay_host) ? 'configured' : 'not_configured',
       },
     }));
   }, [triggerRepoBackup]);
@@ -373,6 +391,19 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   const refreshRealHealth = useCallback(async () => {
     const report = await getRealHealthReport();
     setHealthReport(report);
+  }, []);
+
+  // Update shared remote repository state after probe or connect.
+  // Propagates to Health Checks and Protected gate through setupState change.
+  const updateRemoteRepositoryState = useCallback((status: string, lastOkHours: number) => {
+    const remoteState = { status: status as ClientSetupState['remote_repository']['status'], last_ok_hours: lastOkHours };
+    setSetupState(prev => ({ ...prev, remote_repository: remoteState }));
+    setHealthReport(prev => ({
+      ...prev,
+      remote_target_status: status as typeof prev.remote_target_status,
+      remote_target_last_ok_hours: lastOkHours,
+    }));
+    // Readiness re-evaluation is triggered by the setupState change via the existing useEffect.
   }, []);
 
   const addLogLine = useCallback((raw: string, redacted: string) => {
@@ -428,6 +459,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       updateRealLab,
       refreshRealHealth,
       refreshReadiness,
+      updateRemoteRepositoryState,
     }}>
       {children}
     </AppContext.Provider>

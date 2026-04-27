@@ -19,6 +19,43 @@ pub enum UserRole {
     ReciprocalMatch,
 }
 
+fn default_sftp_port() -> u16 {
+    22
+}
+fn default_known_host_mode() -> String {
+    "strict".to_string()
+}
+
+/// SFTP remote repository target for the default v1 backup path.
+///
+/// The data owner's encrypted Kopia repository lives on the matched peer's
+/// SFTP-exposed storage, reachable over a private overlay network.
+///
+/// **No secret values are stored here.** SSH key material is stored in the
+/// OS keychain; `ssh_key_ref` holds only a keychain reference string.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteRepositoryConfig {
+    /// Always "sftp" in v1.
+    pub kind: String,
+    /// Peer overlay hostname or IP (Tailscale, Headscale, or WireGuard).
+    pub overlay_host: String,
+    /// Isolated SFTP username on the peer storage host.
+    pub sftp_user: String,
+    /// SFTP port (default 22).
+    #[serde(default = "default_sftp_port")]
+    pub sftp_port: u16,
+    /// Remote path on the peer where the encrypted repository is stored.
+    pub sftp_path: String,
+    /// Keychain reference for the SSH private key — NOT the raw key value.
+    /// Format: "keychain:nasbb/sftp-<match-id>" or a filesystem path reference.
+    pub ssh_key_ref: Option<String>,
+    /// Host key verification mode: "strict" (default), "accept-once", or "insecure-ignore".
+    #[serde(default = "default_known_host_mode")]
+    pub known_host_mode: String,
+    /// Optional quota hint from the backup pact, in GB.
+    pub quota_hint_gb: Option<u64>,
+}
+
 /// Top-level app configuration. Persisted as TOML in the OS app-data dir.
 /// Secret values are never stored here; use `*_ref` fields for keyring references.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,9 +65,16 @@ pub struct NasbbConfig {
     /// Folders whose contents are backed up (data-owner modes only).
     /// Required for `DataOwner` and `ReciprocalMatch`.
     pub source_folders: Vec<PathBuf>,
-    /// Local path for the encrypted Kopia repository (data-owner modes only).
-    /// Required for `DataOwner` and `ReciprocalMatch`; not required for pure `StorageHost`.
+    /// Local path for the encrypted Kopia repository (test lab / local filesystem mode only).
+    /// For the default v1 SFTP path this is not required; use `remote_repository` instead.
     pub repository_path: Option<PathBuf>,
+    /// Remote SFTP repository target (default v1 backup path).
+    /// When present, Kopia writes encrypted repository data directly to peer storage.
+    #[serde(default)]
+    pub remote_repository: Option<RemoteRepositoryConfig>,
+    /// Keychain reference for the Kopia repository password — NOT the password itself.
+    #[serde(default)]
+    pub kopia_password_ref: Option<String>,
     /// Path offered to peers for their encrypted repository (host modes only).
     /// Required when role is `StorageHost` or `ReciprocalMatch`.
     pub hosted_storage_path: Option<PathBuf>,
@@ -77,6 +121,23 @@ pub enum ConfigError {
          only the encrypted repository path is allowed"
     )]
     SourcePathPlannedAsSyncthingFolder(PathBuf),
+    // Remote repository (SFTP) errors
+    #[error("remote_repository.overlay_host must not be empty")]
+    MissingOverlayHost,
+    #[error("remote_repository.sftp_user must not be empty")]
+    MissingSftpUser,
+    #[error("remote_repository.sftp_path must not be empty")]
+    MissingSftpPath,
+    #[error(
+        "remote_repository.sftp_path looks like a local source path — \
+         the SFTP path is on the remote peer, not the local machine"
+    )]
+    SftpPathMatchesLocalSource,
+    #[error(
+        "remote_repository.ssh_key_ref contains raw private key material — \
+         store the key in the OS keychain and record only the reference here"
+    )]
+    RawKeyMaterialInConfig,
 }
 
 fn is_host_role(role: &UserRole) -> bool {
@@ -99,26 +160,32 @@ pub fn validate_config(cfg: &NasbbConfig) -> Result<(), ConfigError> {
         if cfg.source_folders.is_empty() {
             return Err(ConfigError::NoSourceFolders);
         }
-        let repository_path = cfg
-            .repository_path
-            .as_ref()
-            .ok_or(ConfigError::MissingRepositoryPath)?;
 
-        for src in &cfg.source_folders {
-            if src == repository_path {
-                return Err(ConfigError::DirectSourceShare(src.clone()));
-            }
-            if repository_path.starts_with(src) {
-                return Err(ConfigError::RepoInsideSource(
-                    repository_path.clone(),
-                    src.clone(),
-                ));
-            }
-            if src.starts_with(repository_path) {
-                return Err(ConfigError::SourceInsideRepo(
-                    src.clone(),
-                    repository_path.clone(),
-                ));
+        // In SFTP mode (remote_repository set), a local repository_path is not
+        // required — Kopia writes encrypted data directly to peer storage.
+        // In local filesystem mode (no remote_repository), repository_path is required.
+        if cfg.remote_repository.is_none() {
+            let repository_path = cfg
+                .repository_path
+                .as_ref()
+                .ok_or(ConfigError::MissingRepositoryPath)?;
+
+            for src in &cfg.source_folders {
+                if src == repository_path {
+                    return Err(ConfigError::DirectSourceShare(src.clone()));
+                }
+                if repository_path.starts_with(src) {
+                    return Err(ConfigError::RepoInsideSource(
+                        repository_path.clone(),
+                        src.clone(),
+                    ));
+                }
+                if src.starts_with(repository_path) {
+                    return Err(ConfigError::SourceInsideRepo(
+                        src.clone(),
+                        repository_path.clone(),
+                    ));
+                }
             }
         }
     }
@@ -144,6 +211,33 @@ pub fn validate_config(cfg: &NasbbConfig) -> Result<(), ConfigError> {
                     hosted.clone(),
                     src.clone(),
                 ));
+            }
+        }
+    }
+
+    // ── Remote repository (SFTP) checks ──────────────────────────────────────
+    if let Some(remote) = &cfg.remote_repository {
+        if remote.overlay_host.trim().is_empty() {
+            return Err(ConfigError::MissingOverlayHost);
+        }
+        if remote.sftp_user.trim().is_empty() {
+            return Err(ConfigError::MissingSftpUser);
+        }
+        if remote.sftp_path.trim().is_empty() {
+            return Err(ConfigError::MissingSftpPath);
+        }
+        // Reject SFTP path if it exactly matches any configured local source folder.
+        let sftp_as_path = PathBuf::from(&remote.sftp_path);
+        for src in &cfg.source_folders {
+            if sftp_as_path == *src {
+                return Err(ConfigError::SftpPathMatchesLocalSource);
+            }
+        }
+        // Reject raw private key material in the key reference field.
+        if let Some(key_ref) = &remote.ssh_key_ref {
+            let upper = key_ref.to_uppercase();
+            if upper.contains("BEGIN") && upper.contains("PRIVATE KEY") {
+                return Err(ConfigError::RawKeyMaterialInConfig);
             }
         }
     }
@@ -184,6 +278,8 @@ mod tests {
             role: UserRole::DataOwner,
             source_folders: vec![PathBuf::from("/home/user/documents")],
             repository_path: Some(PathBuf::from("/home/user/.nasbb-repo")),
+            remote_repository: None,
+            kopia_password_ref: None,
             hosted_storage_path: None,
             hosted_quota_gb: 0,
             retention_keep_last: 5,
@@ -200,6 +296,8 @@ mod tests {
             role: UserRole::StorageHost,
             source_folders: vec![],
             repository_path: None,
+            remote_repository: None,
+            kopia_password_ref: None,
             hosted_storage_path: Some(PathBuf::from("/mnt/peer-storage")),
             hosted_quota_gb: 1024,
             retention_keep_last: 5,
@@ -217,6 +315,19 @@ mod tests {
             source_folders: vec![PathBuf::from("/home/user/documents")],
             repository_path: Some(PathBuf::from("/home/user/.nasbb-repo")),
             ..host_config()
+        }
+    }
+
+    fn sftp_remote() -> RemoteRepositoryConfig {
+        RemoteRepositoryConfig {
+            kind: "sftp".to_string(),
+            overlay_host: "peer.tailnet.example".to_string(),
+            sftp_user: "nasbb-match-1".to_string(),
+            sftp_port: 22,
+            sftp_path: "/srv/nasbb/repo".to_string(),
+            ssh_key_ref: Some("keychain:nasbb/sftp-match-1".to_string()),
+            known_host_mode: "strict".to_string(),
+            quota_hint_gb: Some(500),
         }
     }
 
@@ -290,6 +401,28 @@ mod tests {
         assert!(matches!(
             validate_config(&cfg),
             Err(ConfigError::InvalidRetention)
+        ));
+    }
+
+    #[test]
+    fn data_owner_with_sftp_remote_does_not_require_local_repository_path() {
+        let mut cfg = owner_config();
+        cfg.repository_path = None; // no local path
+        cfg.remote_repository = Some(sftp_remote()); // SFTP target instead
+        assert!(
+            validate_config(&cfg).is_ok(),
+            "SFTP mode should not require local repository_path"
+        );
+    }
+
+    #[test]
+    fn data_owner_without_remote_still_requires_local_repository_path() {
+        let mut cfg = owner_config();
+        cfg.repository_path = None;
+        cfg.remote_repository = None;
+        assert!(matches!(
+            validate_config(&cfg),
+            Err(ConfigError::MissingRepositoryPath)
         ));
     }
 
@@ -471,5 +604,144 @@ mod tests {
         assert!(toml_str.contains("pairing_token_ref"));
         // The value is a ref, not a token — just verify the field is present
         assert!(toml_str.contains("keychain:nasbb/pairing"));
+    }
+
+    // ── Remote repository (SFTP) validation ──────────────────────────────────
+
+    #[test]
+    fn sftp_config_valid_passes() {
+        let mut cfg = owner_config();
+        cfg.remote_repository = Some(sftp_remote());
+        assert!(validate_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn sftp_rejects_empty_overlay_host() {
+        let mut cfg = owner_config();
+        let mut remote = sftp_remote();
+        remote.overlay_host = "".to_string();
+        cfg.remote_repository = Some(remote);
+        assert!(matches!(
+            validate_config(&cfg),
+            Err(ConfigError::MissingOverlayHost)
+        ));
+    }
+
+    #[test]
+    fn sftp_rejects_whitespace_overlay_host() {
+        let mut cfg = owner_config();
+        let mut remote = sftp_remote();
+        remote.overlay_host = "   ".to_string();
+        cfg.remote_repository = Some(remote);
+        assert!(matches!(
+            validate_config(&cfg),
+            Err(ConfigError::MissingOverlayHost)
+        ));
+    }
+
+    #[test]
+    fn sftp_rejects_empty_sftp_user() {
+        let mut cfg = owner_config();
+        let mut remote = sftp_remote();
+        remote.sftp_user = "".to_string();
+        cfg.remote_repository = Some(remote);
+        assert!(matches!(
+            validate_config(&cfg),
+            Err(ConfigError::MissingSftpUser)
+        ));
+    }
+
+    #[test]
+    fn sftp_rejects_empty_sftp_path() {
+        let mut cfg = owner_config();
+        let mut remote = sftp_remote();
+        remote.sftp_path = "".to_string();
+        cfg.remote_repository = Some(remote);
+        assert!(matches!(
+            validate_config(&cfg),
+            Err(ConfigError::MissingSftpPath)
+        ));
+    }
+
+    #[test]
+    fn sftp_rejects_path_matching_local_source() {
+        let mut cfg = owner_config();
+        let mut remote = sftp_remote();
+        // Point SFTP path at the exact local source folder path — should be rejected.
+        remote.sftp_path = "/home/user/documents".to_string();
+        cfg.remote_repository = Some(remote);
+        assert!(matches!(
+            validate_config(&cfg),
+            Err(ConfigError::SftpPathMatchesLocalSource)
+        ));
+    }
+
+    #[test]
+    fn sftp_allows_path_not_matching_any_source() {
+        let mut cfg = owner_config();
+        let mut remote = sftp_remote();
+        remote.sftp_path = "/srv/nasbb/repo".to_string();
+        cfg.remote_repository = Some(remote);
+        assert!(validate_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn sftp_rejects_raw_private_key_in_ssh_key_ref() {
+        let mut cfg = owner_config();
+        let mut remote = sftp_remote();
+        remote.ssh_key_ref = Some(
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...".to_string(),
+        );
+        cfg.remote_repository = Some(remote);
+        assert!(matches!(
+            validate_config(&cfg),
+            Err(ConfigError::RawKeyMaterialInConfig)
+        ));
+    }
+
+    #[test]
+    fn sftp_rejects_openssh_private_key_in_ssh_key_ref() {
+        let mut cfg = owner_config();
+        let mut remote = sftp_remote();
+        remote.ssh_key_ref =
+            Some("-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNza...".to_string());
+        cfg.remote_repository = Some(remote);
+        assert!(matches!(
+            validate_config(&cfg),
+            Err(ConfigError::RawKeyMaterialInConfig)
+        ));
+    }
+
+    #[test]
+    fn sftp_allows_keychain_ref_in_ssh_key_ref() {
+        let mut cfg = owner_config();
+        let mut remote = sftp_remote();
+        remote.ssh_key_ref = Some("keychain:nasbb/sftp-match-1".to_string());
+        cfg.remote_repository = Some(remote);
+        assert!(validate_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn sftp_allows_filesystem_path_ref_in_ssh_key_ref() {
+        let mut cfg = owner_config();
+        let mut remote = sftp_remote();
+        remote.ssh_key_ref = Some("/home/user/.ssh/id_ed25519".to_string());
+        cfg.remote_repository = Some(remote);
+        assert!(validate_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn sftp_config_toml_round_trip_stores_only_key_ref() {
+        let mut cfg = owner_config();
+        let mut remote = sftp_remote();
+        remote.ssh_key_ref = Some("keychain:nasbb/sftp-match-1".to_string());
+        cfg.remote_repository = Some(remote);
+        let toml_str = toml::to_string(&cfg).expect("serialize");
+        // Key reference is present
+        assert!(toml_str.contains("ssh_key_ref"));
+        assert!(toml_str.contains("keychain:nasbb/sftp-match-1"));
+        // Raw key material must never appear
+        assert!(!toml_str.contains("PRIVATE KEY"));
+        assert!(!toml_str.contains("BEGIN RSA"));
     }
 }

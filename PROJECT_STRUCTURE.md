@@ -14,7 +14,7 @@ Future website for user profiles, matching, backup pacts, health dashboards, rep
 apps/client
 ```
 
-Future cross-platform desktop client. This is the first real client-app target: Tauri + React + TypeScript UI with a local Rust service. It should manage bundled Kopia and Syncthing, validate safe folder layout, run backups and restore drills, and report only allowlisted operational metadata.
+Future cross-platform desktop client. This is the first real client-app target: Tauri + React + TypeScript UI with a local Rust service. It should manage Kopia, SFTP remote repository targets, private overlay reachability, safe folder layout, backups, restore drills, and only allowlisted operational metadata. Syncthing work is legacy/optional mirror-mode context unless it is deliberately reintroduced.
 
 Current scaffold includes UI placeholder views and Rust core modules for config validation, health mapping, safe folder checks, redaction, and tool manifest modeling.
 
@@ -28,7 +28,7 @@ Legacy/future headless agent notes for NAS and Docker-style deployments. Keep th
 infra/syncthing
 ```
 
-Infrastructure notes for Syncthing discovery and relay services. This starts as documentation because the first prototype can use public Syncthing discovery and relay.
+Infrastructure notes. The current default direction is SFTP over Tailscale, Headscale, or WireGuard. Older Syncthing discovery and relay notes are retained as optional/future transport research.
 
 ```text
 docs

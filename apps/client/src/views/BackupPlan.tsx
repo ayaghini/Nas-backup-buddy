@@ -26,6 +26,7 @@ import {
   initializeKopiaRepository,
   pickDirectory,
   planKopiaRepository,
+  planKopiaSftpRepository,
   runRealBackupFromConfig,
 } from '../lib/tauri-bridge';
 import { formatBytes, kopiaStatusLabel } from '../lib/mock-state';
@@ -85,6 +86,7 @@ function KopiaRepoCard({
   const [open, setOpen] = useState(false);
   const status = repoState?.status ?? 'configured';
   const isRunning = jobStatus?.init_state === 'running' || jobStatus?.backup_state === 'running';
+  const isSftp = !!(config.overlay_host?.trim());
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
@@ -103,6 +105,7 @@ function KopiaRepoCard({
               <RepoStatusBadge status={status} />
             </div>
             <div className="flex gap-3 mt-0.5 text-xs text-slate-500 flex-wrap">
+              {isSftp && <span className="text-sky-400/70">SFTP</span>}
               <span>{config.source_folders.length} source folder{config.source_folders.length !== 1 ? 's' : ''}</span>
               {repoState?.last_snapshot_at && (
                 <span className="flex items-center gap-1">
@@ -156,6 +159,20 @@ function KopiaRepoCard({
               <div className="text-slate-500 mb-0.5">Kopia status</div>
               <div className="text-slate-300">{kopiaStatusLabel(status)}</div>
             </div>
+            {isSftp && (
+              <div className="col-span-2">
+                <div className="text-slate-500 mb-0.5">Repository target</div>
+                <div className="text-sky-300/70 text-xs">
+                  SFTP on overlay network — host, user, and path stored locally only
+                </div>
+              </div>
+            )}
+            {!isSftp && config.repository_path && (
+              <div className="col-span-2">
+                <div className="text-slate-500 mb-0.5">Repository type</div>
+                <div className="text-slate-400 text-xs">Local filesystem (test lab / legacy)</div>
+              </div>
+            )}
           </div>
 
           {jobStatus?.error && (
@@ -338,14 +355,25 @@ export function BackupPlan() {
     triggerRepoBackup,
   } = useApp();
   const repo = setupState.kopia_repository;
-  const repoPath = wizardConfig?.repository_path ?? '';
+  const isSftpConfig = !!(wizardConfig?.overlay_host?.trim());
 
   // ── Command plan preview (collapsible, advanced) ──────────────────────────
   const [commandPlans, setCommandPlans] = useState<CommandPlanSummary[]>([]);
   const [commandPlanOpen, setCommandPlanOpen] = useState(false);
   useEffect(() => {
-    planKopiaRepository(repoPath || '[repo-path]', 'kopia').then(setCommandPlans);
-  }, [repoPath]);
+    if (isSftpConfig && wizardConfig) {
+      planKopiaSftpRepository(
+        wizardConfig.overlay_host,
+        wizardConfig.sftp_user,
+        wizardConfig.sftp_path,
+        wizardConfig.sftp_port || 22,
+        'kopia',
+      ).then(setCommandPlans);
+    } else {
+      const repoPath = wizardConfig?.repository_path ?? '';
+      planKopiaRepository(repoPath || '[repo-path]', 'kopia').then(setCommandPlans);
+    }
+  }, [isSftpConfig, wizardConfig]);
 
   return (
     <div className="p-6 space-y-6 max-w-2xl">
@@ -400,17 +428,27 @@ export function BackupPlan() {
             </button>
           </div>
 
-          {wizardConfigs.map((cfg, i) => (
-            <KopiaRepoCard
-              key={cfg.repository_path || i}
-              config={cfg}
-              configIndex={i}
-              repoState={cfg.repository_path === wizardConfig?.repository_path ? repo : null}
-              jobStatus={repoJobStatuses[i] ?? null}
-              masterPasswordSet={masterPasswordSet}
-              onRunBackup={triggerRepoBackup}
-            />
-          ))}
+          {wizardConfigs.map((cfg, i) => {
+            // Stable card key: prefer SFTP target identity, fall back to local path
+            const cardKey = cfg.overlay_host
+              ? `sftp:${cfg.overlay_host}:${cfg.sftp_path}:${i}`
+              : `local:${cfg.repository_path || i}`;
+            // Derive repoState: match by SFTP target or local path
+            const isActiveConfig = cfg.overlay_host
+              ? cfg.overlay_host === wizardConfig?.overlay_host && cfg.sftp_path === wizardConfig?.sftp_path
+              : cfg.repository_path === wizardConfig?.repository_path;
+            return (
+              <KopiaRepoCard
+                key={cardKey}
+                config={cfg}
+                configIndex={i}
+                repoState={isActiveConfig ? repo : null}
+                jobStatus={repoJobStatuses[i] ?? null}
+                masterPasswordSet={masterPasswordSet}
+                onRunBackup={triggerRepoBackup}
+              />
+            );
+          })}
         </div>
       )}
 

@@ -7,19 +7,35 @@
 import type {
   ClientSetupState,
   CommandPlanSummary,
+  CompatibilityEntry,
   HealthReport,
+  HostSetupInput,
+  HostSetupPlan,
+  HostSetupStep,
   IntegrationCheckResult,
   MockBackupResult,
   MockCheckResult,
   MockDrillResult,
+  OverlayConfig,
+  OverlayDetectionResult,
+  OverlayProvider,
+  OverlayVerifyStep,
+  OwnerSshKey,
+  PeerBundle,
   RealBackupResult,
   RealCheckResult,
   RealDrillResult,
+  RemoteTargetProbeResponse,
   RepositoryInitResult,
+  SftpRepositoryInitResult,
+  SftpVerifyResult,
   SyncthingApiPlanSummary,
   SyncthingFolderResult,
   SyncthingLiveStatus,
   SyncthingRunStatus,
+  TailscaleConnectResult,
+  TailscaleDetail,
+  TailscalePingResult,
   TestLabInfo,
   ToolProbeResult,
   TransportFolderInfo,
@@ -59,6 +75,19 @@ export async function pickDirectory(): Promise<string | null> {
     return selected;
   }
   return null;
+}
+
+export async function pickFile(): Promise<string | null> {
+  if (!isTauri()) {
+    return null;
+  }
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  const selected = await open({
+    directory: false,
+    multiple: false,
+    title: 'Choose an SSH private key',
+  });
+  return typeof selected === 'string' ? selected : null;
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
@@ -500,3 +529,360 @@ export async function getRealHealthReport(): Promise<HealthReport> {
 }
 
 export { DEFAULT_HEALTH_REPORT };
+
+// ── SFTP remote target commands ───────────────────────────────────────────────
+
+/** Probe the remote SFTP host for TCP reachability on the given port. No secrets used. */
+export async function probeRemoteTarget(host: string, port: number): Promise<RemoteTargetProbeResponse> {
+  try {
+    return await invoke<RemoteTargetProbeResponse>('probe_remote_target', { host, port });
+  } catch {
+    return { status: 'error', method: 'tcp_connect', latency_ms: null, message: 'Not available in browser mode.' };
+  }
+}
+
+/** Return the planned Kopia SFTP command sequence for display (all params redacted). */
+export async function planKopiaSftpRepository(
+  host: string,
+  sftpUser: string,
+  sftpPath: string,
+  sftpPort: number,
+  enginePath: string,
+): Promise<CommandPlanSummary[]> {
+  try {
+    return await invoke<CommandPlanSummary[]>('plan_kopia_sftp_repository', {
+      host, sftpUser, sftpPath, sftpPort, enginePath,
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** Create or connect a Kopia SFTP repository on the peer storage host. */
+export async function initializeKopiaSftpRepository(
+  host: string,
+  sftpUser: string,
+  sftpPath: string,
+  sftpPort: number,
+  sshKeyPath: string | null,
+): Promise<SftpRepositoryInitResult> {
+  return invoke<SftpRepositoryInitResult>('initialize_kopia_sftp_repository', {
+    host, sftpUser, sftpPath, sftpPort, sshKeyPath,
+  });
+}
+
+/**
+ * Run a Kopia backup of source folders to an already-connected SFTP repository.
+ *
+ * The repository must have been connected first via `initializeKopiaSftpRepository`.
+ * Password comes from KopiaPasswordState on the Rust side — never passed here.
+ */
+export async function runRealSftpBackupFromConfig(
+  sourceFolders: string[],
+  host: string,
+  sftpUser: string,
+  sftpPath: string,
+  sftpPort: number,
+  sshKeyPath: string | null,
+): Promise<RealBackupResult> {
+  return invoke<RealBackupResult>('run_real_sftp_backup_from_config', {
+    sourceFolders, host, sftpUser, sftpPath, sftpPort, sshKeyPath,
+  });
+}
+
+
+// ── Storage-host setup command ─────────────────────────────────────────────────
+
+/** Validate host setup inputs and generate a shell command plan. */
+export async function planHostSetup(
+  input: HostSetupInput,
+  overlayHost: string,
+): Promise<HostSetupPlan> {
+  return invoke<HostSetupPlan>('plan_host_setup', { input, overlayHost });
+}
+
+/**
+ * Validate that a hosted path does not overlap any source folder or existing hosted allocation.
+ * Lighter than planHostSetup — useful for interactive validation. Throws on overlap.
+ * Browser-mode fallback uses lexical path comparison.
+ */
+export async function validateHostedPath(
+  hostedPath: string,
+  sourceFolders: string[],
+  existingHostedPaths: string[],
+): Promise<void> {
+  try {
+    return await invoke<void>('validate_hosted_path', { hostedPath, sourceFolders, existingHostedPaths });
+  } catch (err) {
+    if (isTauri()) throw err;
+    // Browser-mode fallback: lexical overlap check
+    const path = hostedPath.trim();
+    if (!path) throw new Error('Hosted path must not be empty.');
+    for (const src of sourceFolders) {
+      if (path === src || path.startsWith(`${src}/`) || src.startsWith(`${path}/`))
+        throw new Error(`Hosted path overlaps source folder: ${src}`);
+    }
+    for (const existing of existingHostedPaths) {
+      if (!existing.trim()) continue;
+      if (path === existing || path.startsWith(`${existing}/`) || existing.startsWith(`${path}/`))
+        throw new Error(`Hosted path overlaps existing allocation: ${existing}`);
+    }
+  }
+}
+
+/**
+ * Generate display-only steps to install an owner's SSH public key after their Access Request arrives.
+ * Called explicitly by the host — never automatic.
+ * Returns the authorized_keys installation steps only.
+ */
+export async function generateAuthorizeOwnerKeyPlan(
+  sftpUsername: string,
+  ownerPublicKey: string,
+  sftpPort: number,
+): Promise<HostSetupStep[]> {
+  return invoke<HostSetupStep[]>('generate_authorize_owner_key_plan', { sftpUsername, ownerPublicKey, sftpPort });
+}
+
+// ── Overlay setup/detection commands ─────────────────────────────────────────
+
+/** Detect installed overlay tools (Tailscale, WireGuard) using read-only CLI probes. */
+export async function detectOverlay(): Promise<OverlayDetectionResult[]> {
+  try {
+    return await invoke<OverlayDetectionResult[]>('detect_overlay');
+  } catch {
+    return [];
+  }
+}
+
+/** Validate overlay config (structural checks only — no network probe). */
+export async function validateOverlay(config: OverlayConfig): Promise<void> {
+  return invoke<void>('validate_overlay', { config });
+}
+
+/** Read-only overlay verification steps for a provider and peer address. */
+export async function getOverlayVerifySteps(
+  provider: OverlayProvider,
+  peerAddress: string,
+): Promise<OverlayVerifyStep[]> {
+  try {
+    return await invoke<OverlayVerifyStep[]>('get_overlay_verify_steps', { provider, peerAddress });
+  } catch {
+    return [];
+  }
+}
+
+/** Guided setup steps for Tailscale. */
+export async function getTailscaleSetupGuide(): Promise<OverlayVerifyStep[]> {
+  try {
+    return await invoke<OverlayVerifyStep[]>('get_tailscale_setup_guide');
+  } catch {
+    return [];
+  }
+}
+
+/** Guided setup steps for WireGuard. */
+export async function getWireguardSetupGuide(): Promise<OverlayVerifyStep[]> {
+  try {
+    return await invoke<OverlayVerifyStep[]>('get_wireguard_setup_guide');
+  } catch {
+    return [];
+  }
+}
+
+/** Guided setup steps for Headscale. */
+export async function getHeadscaleSetupGuide(serverUrl?: string): Promise<OverlayVerifyStep[]> {
+  try {
+    return await invoke<OverlayVerifyStep[]>('get_headscale_setup_guide', { serverUrl: serverUrl ?? null });
+  } catch {
+    return [];
+  }
+}
+
+/** Overlay compatibility matrix. */
+export async function getOverlayCompatibilityMatrix(): Promise<CompatibilityEntry[]> {
+  try {
+    return await invoke<CompatibilityEntry[]>('get_overlay_compatibility_matrix');
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Rich Tailscale status: binary path, PATH status, add-to-PATH command,
+ * connected state, self IPs, MagicDNS hostname, tailnet name, peer count.
+ * Never throws — all failures surface as field values (connected: false, etc.).
+ */
+export async function getTailscaleDetail(): Promise<TailscaleDetail> {
+  try {
+    return await invoke<TailscaleDetail>('get_tailscale_detail');
+  } catch {
+    return {
+      installed: false,
+      cli_accessible: false,
+      cli_path: null,
+      on_path: false,
+      connected: false,
+      needs_login: false,
+      backend_state: null,
+      auth_url: null,
+      self_ips: [],
+      self_dns_name: null,
+      magic_dns_suffix: null,
+      tailnet_name: null,
+      peer_count: 0,
+      last_checked_at: new Date().toISOString(),
+      status_message: 'Not available in browser mode.',
+      setup_state: 'not_installed',
+    };
+  }
+}
+
+/**
+ * Run `tailscale ping <peer>` — explicit user-triggered overlay diagnostic.
+ * Returns reachability, latency, and routing path (DERP relay or direct).
+ * Never called automatically.
+ */
+export async function tailscalePingPeer(peer: string): Promise<TailscalePingResult> {
+  try {
+    return await invoke<TailscalePingResult>('tailscale_ping_peer', { peer });
+  } catch {
+    return { reachable: false, latency_ms: null, via: null, message: 'Not available in browser mode.' };
+  }
+}
+
+/**
+ * Run `tailscale up` with no flags — explicit, confirmed on-demand connect.
+ * Must only be called from a confirmed user action. Never run automatically.
+ * If NeedsLogin, the auth URL is returned in the result.
+ * Caller should refresh getTailscaleDetail() after this resolves.
+ */
+export async function tailscaleConnect(): Promise<TailscaleConnectResult> {
+  try {
+    return await invoke<TailscaleConnectResult>('tailscale_connect');
+  } catch {
+    return { success: false, needs_auth: false, auth_url: null, message: 'Not available in browser mode.' };
+  }
+}
+
+// ── Owner bundle parsing ──────────────────────────────────────────────────────
+
+/** Parse an Owner Connection Bundle pasted by the data owner. Throws on malformed input. */
+export async function parseOwnerBundle(text: string): Promise<PeerBundle> {
+  try {
+    return await invoke<PeerBundle>('parse_owner_bundle', { text });
+  } catch (err) {
+    if (isTauri()) throw err;
+    // Browser/dev mode: pure-TS fallback parser matching the Rust implementation.
+    return parseBundleTs(text);
+  }
+}
+
+export async function generateOwnerSshKey(matchId: string): Promise<OwnerSshKey & { already_existed: boolean }> {
+  try {
+    return await invoke<OwnerSshKey & { already_existed: boolean }>('generate_owner_ssh_key', { matchId });
+  } catch (err) {
+    if (isTauri()) throw err;
+    return {
+      match_id: matchId,
+      public_key: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMOCKPUBLICKEYONLY nasbb-browser-mode',
+      fingerprint: 'SHA256:browser-mode',
+      private_key_path_or_ref: '[browser-mode-key-ref]',
+      already_existed: false,
+    };
+  }
+}
+
+function parseBundleTs(text: string): PeerBundle {
+  const map: Record<string, string> = {};
+  const comments: string[] = [];
+  let hasKv = false;
+
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('#')) {
+      comments.push(trimmed.slice(1).trim());
+      continue;
+    }
+    const colon = trimmed.indexOf(':');
+    if (colon >= 0) {
+      const key = trimmed.slice(0, colon).trim().toLowerCase().replace(/ /g, '_');
+      const value = trimmed.slice(colon + 1).trim();
+      map[key] = value;
+      hasKv = true;
+    }
+  }
+
+  if (!hasKv) throw new Error('Bundle is empty or contains no parseable key: value lines');
+
+  const get = (field: string): string => {
+    const v = map[field]?.trim() ?? '';
+    if (!v) throw new Error(`Missing required field: ${field}`);
+    return v;
+  };
+
+  const overlayHost = get('overlay_host');
+  const sftpUser = get('sftp_user');
+  const sftpPath = get('sftp_path');
+  const matchId = get('match_id');
+
+  const portStr = map['sftp_port']?.trim() || '22';
+  const sftpPort = parseInt(portStr, 10);
+  if (isNaN(sftpPort) || sftpPort <= 0 || sftpPort > 65535) {
+    throw new Error(`sftp_port must be a number between 1 and 65535, got: '${portStr}'`);
+  }
+
+  const quotaGb = parseInt(map['quota_gb']?.trim() || '0', 10);
+  const overlayProvider = map['overlay_provider']?.trim() || 'not_configured';
+
+  const isFingerprintNote = (l: string) => /verify|fingerprint|ssh-keyscan/i.test(l);
+  const hostKeyFingerprintNote = comments.find(isFingerprintNote)
+    ?? 'Verify host key fingerprint out-of-band before trusting this connection.';
+  const compatibilityNote = comments.find(l => !isFingerprintNote(l)) ?? '';
+
+  const connectionName = map['connection_name']?.trim() ?? '';
+
+  return {
+    overlay_provider: overlayProvider,
+    overlay_host: overlayHost,
+    sftp_user: sftpUser,
+    sftp_port: sftpPort,
+    sftp_path: sftpPath,
+    quota_gb: isNaN(quotaGb) ? 0 : quotaGb,
+    match_id: matchId,
+    connection_name: connectionName,
+    host_key_fingerprint_note: hostKeyFingerprintNote,
+    compatibility_note: compatibilityNote,
+  };
+}
+
+// ── SFTP target verification ──────────────────────────────────────────────────
+
+/**
+ * Verify the SFTP target: SSH auth, path access, and write test using the sftp CLI.
+ * More thorough than probeRemoteTarget (which is TCP-only).
+ * No passwords accepted. Key is a filesystem path only.
+ */
+export async function verifySftpTarget(
+  host: string,
+  port: number,
+  username: string,
+  remotePath: string,
+  keyPath: string | null,
+): Promise<SftpVerifyResult> {
+  try {
+    return await invoke<SftpVerifyResult>('verify_sftp_target', {
+      host, port, username, remotePath, keyPath,
+    });
+  } catch {
+    return {
+      status: 'error',
+      message: 'SFTP verification not available in browser mode.',
+      write_test_passed: false,
+      host_fingerprint: null,
+      fingerprint_status: 'not_available',
+      free_bytes: null,
+      quota_warning: false,
+    };
+  }
+}

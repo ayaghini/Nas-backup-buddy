@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { AppContextProvider } from './context/AppContext';
 import {
   Activity,
@@ -7,18 +7,18 @@ import {
   FlaskConical,
   HardDrive,
   KeyRound,
+  Network,
   RotateCcw,
   Settings,
   Shield,
   Sliders,
   Terminal,
-  Wifi,
   Wand2,
 } from 'lucide-react';
 import { Dashboard }           from './views/Dashboard';
 import { SetupWizard }         from './views/SetupWizard';
 import { BackupPlan }          from './views/BackupPlan';
-import { SyncthingConnection } from './views/SyncthingConnection';
+import { PeerConnection }      from './views/PeerConnection';
 import { RestoreDrill }        from './views/RestoreDrill';
 import { HealthChecks }        from './views/HealthChecks';
 import { Logs }                from './views/Logs';
@@ -28,17 +28,17 @@ import { TestLab }             from './views/TestLab';
 import { RecoveryKey }         from './views/RecoveryKey';
 
 const NAV = [
-  { to: '/',          icon: <Activity size={16} />,       label: 'Dashboard'     },
-  { to: '/setup',     icon: <Wand2 size={16} />,          label: 'Setup Wizard'  },
-  { to: '/backup',    icon: <HardDrive size={16} />,      label: 'Backup Plan'   },
-  { to: '/syncthing', icon: <Wifi size={16} />,           label: 'Syncthing'     },
-  { to: '/drills',    icon: <RotateCcw size={16} />,      label: 'Restore Drill' },
-  { to: '/health',    icon: <Shield size={16} />,         label: 'Health Checks' },
-  { to: '/recovery',  icon: <KeyRound size={16} />,       label: 'Recovery Key'  },
-  { to: '/test-lab',  icon: <FlaskConical size={16} />,   label: 'Test Lab'      },
-  { to: '/logs',      icon: <Terminal size={16} />,       label: 'Logs'          },
-  { to: '/settings',  icon: <Settings size={16} />,       label: 'Settings'      },
-  { to: '/about',     icon: <BookOpen size={16} />,       label: 'About'         },
+  { to: '/',             icon: <Activity size={16} />,     label: 'Dashboard'          },
+  { to: '/setup',        icon: <Wand2 size={16} />,        label: 'Setup Wizard'       },
+  { to: '/backup',       icon: <HardDrive size={16} />,    label: 'Backup Plan'        },
+  { to: '/peer-connection', icon: <Network size={16} />,   label: 'Peer Connection'    },
+  { to: '/drills',       icon: <RotateCcw size={16} />,    label: 'Restore Drill'      },
+  { to: '/health',       icon: <Shield size={16} />,       label: 'Health Checks'      },
+  { to: '/recovery',     icon: <KeyRound size={16} />,     label: 'Recovery Key'       },
+  { to: '/test-lab',     icon: <FlaskConical size={16} />, label: 'Test Lab'           },
+  { to: '/logs',         icon: <Terminal size={16} />,     label: 'Logs'               },
+  { to: '/settings',     icon: <Settings size={16} />,     label: 'Settings'           },
+  { to: '/about',        icon: <BookOpen size={16} />,     label: 'About'              },
 ];
 
 export function App() {
@@ -85,17 +85,21 @@ export function App() {
         {/* Main content */}
         <main className="flex-1 overflow-y-auto">
           <Routes>
-            <Route path="/"          element={<Dashboard />} />
-            <Route path="/setup"     element={<SetupWizard />} />
-            <Route path="/backup"    element={<BackupPlan />} />
-            <Route path="/syncthing" element={<SyncthingConnection />} />
-            <Route path="/drills"    element={<RestoreDrill />} />
-            <Route path="/health"    element={<HealthChecks />} />
-            <Route path="/recovery"  element={<RecoveryKey />} />
-            <Route path="/test-lab"  element={<TestLab />} />
-            <Route path="/logs"      element={<Logs />} />
-            <Route path="/settings"  element={<SettingsView />} />
-            <Route path="/about"     element={<About />} />
+            <Route path="/"             element={<Dashboard />} />
+            <Route path="/setup"        element={<SetupWizard />} />
+            <Route path="/backup"       element={<BackupPlan />} />
+            <Route path="/peer-connection" element={<PeerConnection />} />
+            <Route path="/peer-storage" element={<Navigate to="/peer-connection?section=owner" replace />} />
+            <Route path="/overlay"      element={<Navigate to="/peer-connection?section=network" replace />} />
+            <Route path="/host-setup"   element={<Navigate to="/peer-connection?section=host" replace />} />
+            <Route path="/syncthing"    element={<Navigate to="/peer-connection?section=advanced" replace />} />
+            <Route path="/drills"       element={<RestoreDrill />} />
+            <Route path="/health"       element={<HealthChecks />} />
+            <Route path="/recovery"     element={<RecoveryKey />} />
+            <Route path="/test-lab"     element={<TestLab />} />
+            <Route path="/logs"         element={<Logs />} />
+            <Route path="/settings"     element={<SettingsView />} />
+            <Route path="/about"        element={<About />} />
           </Routes>
         </main>
       </div>

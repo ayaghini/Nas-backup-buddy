@@ -160,6 +160,64 @@ impl KopiaPlanner {
         }
     }
 
+    /// Plan: create a new encrypted SFTP repository on the peer storage host.
+    ///
+    /// All SFTP connection details (host, username, path) are redacted in display_command
+    /// to prevent them from appearing in UI or logs. The SSH key path is also redacted.
+    /// Repository encryption password is set via KOPIA_PASSWORD env var only.
+    pub fn create_sftp_repository(&self, host: &str, user: &str, path: &str, port: u16) -> CommandPlan {
+        let args = vec![
+            "repository".to_string(),
+            "create".to_string(),
+            "sftp".to_string(),
+            "--host".to_string(),
+            host.to_string(),
+            "--port".to_string(),
+            port.to_string(),
+            "--username".to_string(),
+            user.to_string(),
+            "--path".to_string(),
+            path.to_string(),
+        ];
+        CommandPlan {
+            executable: self.executable.clone(),
+            args,
+            env_vars: vec![EnvVar::sensitive("KOPIA_PASSWORD")],
+            display_command: format!(
+                "{} repository create sftp --host [REDACTED] --port {} --username [REDACTED] --path [REDACTED]",
+                self.executable, port
+            ),
+        }
+    }
+
+    /// Plan: connect to an existing encrypted SFTP repository on peer storage.
+    ///
+    /// Same redaction rules as `create_sftp_repository`.
+    pub fn connect_sftp_repository(&self, host: &str, user: &str, path: &str, port: u16) -> CommandPlan {
+        let args = vec![
+            "repository".to_string(),
+            "connect".to_string(),
+            "sftp".to_string(),
+            "--host".to_string(),
+            host.to_string(),
+            "--port".to_string(),
+            port.to_string(),
+            "--username".to_string(),
+            user.to_string(),
+            "--path".to_string(),
+            path.to_string(),
+        ];
+        CommandPlan {
+            executable: self.executable.clone(),
+            args,
+            env_vars: vec![EnvVar::sensitive("KOPIA_PASSWORD")],
+            display_command: format!(
+                "{} repository connect sftp --host [REDACTED] --port {} --username [REDACTED] --path [REDACTED]",
+                self.executable, port
+            ),
+        }
+    }
+
     /// Plan: restore a snapshot to a clean destination.
     /// `snapshot_id` is not a secret. `dest_path` is redacted to avoid logging user paths.
     pub fn restore_snapshot(&self, snapshot_id: &str, dest_path: &str) -> CommandPlan {
@@ -554,5 +612,84 @@ mod tests {
         let result =
             syncthing().create_repository_folder("peer-folder", "/mnt/peer-storage", &sources);
         assert!(result.is_ok());
+    }
+
+    // ── Kopia SFTP planner ────────────────────────────────────────────────────
+
+    #[test]
+    fn sftp_create_display_redacts_host_user_path() {
+        let plan = kopia().create_sftp_repository("secret-peer.tailnet", "nasbb-user", "/srv/repo", 22);
+        assert!(!plan.display_command.contains("secret-peer.tailnet"));
+        assert!(!plan.display_command.contains("nasbb-user"));
+        assert!(!plan.display_command.contains("/srv/repo"));
+        assert!(plan.display_command.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn sftp_connect_display_redacts_host_user_path() {
+        let plan = kopia().connect_sftp_repository("peer.example", "alice", "/data/repo", 2222);
+        assert!(!plan.display_command.contains("peer.example"));
+        assert!(!plan.display_command.contains("alice"));
+        assert!(!plan.display_command.contains("/data/repo"));
+        assert!(plan.display_command.contains("[REDACTED]"));
+        // Port is not secret — it can appear in display
+        assert!(plan.display_command.contains("2222"));
+    }
+
+    #[test]
+    fn sftp_create_uses_kopia_password_env_not_arg() {
+        let plan = kopia().create_sftp_repository("host", "user", "/path", 22);
+        // Password must not appear in args
+        assert!(plan.args.iter().all(|a| !a.to_lowercase().contains("password")));
+        // KOPIA_PASSWORD must be listed as a sensitive env var
+        assert!(plan
+            .env_vars
+            .iter()
+            .any(|e| e.name == "KOPIA_PASSWORD" && e.sensitive && e.value.is_none()));
+    }
+
+    #[test]
+    fn sftp_connect_uses_kopia_password_env_not_arg() {
+        let plan = kopia().connect_sftp_repository("host", "user", "/path", 22);
+        assert!(plan.args.iter().all(|a| !a.to_lowercase().contains("password")));
+        assert!(plan
+            .env_vars
+            .iter()
+            .any(|e| e.name == "KOPIA_PASSWORD" && e.sensitive && e.value.is_none()));
+    }
+
+    #[test]
+    fn sftp_create_args_include_sftp_subcommand() {
+        let plan = kopia().create_sftp_repository("h", "u", "/p", 22);
+        assert!(plan.args.contains(&"repository".to_string()));
+        assert!(plan.args.contains(&"create".to_string()));
+        assert!(plan.args.contains(&"sftp".to_string()));
+    }
+
+    #[test]
+    fn sftp_connect_args_include_sftp_subcommand() {
+        let plan = kopia().connect_sftp_repository("h", "u", "/p", 22);
+        assert!(plan.args.contains(&"repository".to_string()));
+        assert!(plan.args.contains(&"connect".to_string()));
+        assert!(plan.args.contains(&"sftp".to_string()));
+    }
+
+    #[test]
+    fn all_sftp_secret_env_vars_have_no_value() {
+        let sftp_plans = vec![
+            kopia().create_sftp_repository("h", "u", "/p", 22),
+            kopia().connect_sftp_repository("h", "u", "/p", 22),
+        ];
+        for plan in sftp_plans {
+            for env_var in &plan.env_vars {
+                if env_var.sensitive {
+                    assert!(
+                        env_var.value.is_none(),
+                        "Sensitive env var {} must not store a value",
+                        env_var.name
+                    );
+                }
+            }
+        }
     }
 }

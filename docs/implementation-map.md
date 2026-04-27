@@ -10,9 +10,10 @@ Create a trustworthy homelab backup exchange where users can safely store encryp
 
 ## Non-Negotiable Rules
 
-- Never sync a user's live source folder directly to an untrusted peer.
+- Never expose a user's live source folder directly to an untrusted peer.
 - Never collect backup encryption passwords.
 - Never mark a setup healthy until a restore drill succeeds.
+- Never require the data owner to keep a full second encrypted repository copy unless they explicitly choose a mirror mode.
 - Never launch paid storage before legal, abuse, payout, and dispute controls exist.
 - Never imply this replaces a complete 3-2-1 backup strategy during early phases.
 
@@ -49,8 +50,9 @@ Goal: prove that two users can exchange encrypted offsite backups using existing
 Scope:
 
 - Two machines on separate networks.
-- Kopia or restic encrypted repository.
-- Syncthing replication of repository data.
+- Kopia encrypted repository on peer-hosted SFTP storage.
+- Private overlay connectivity using Tailscale, Headscale, or WireGuard.
+- Isolated host account/path with quota.
 - One backup source folder with sample data.
 - One canary restore file.
 - One full restore drill.
@@ -58,11 +60,12 @@ Scope:
 Required setup details:
 
 - Document operating systems.
-- Document Syncthing version.
+- Document SFTP server and SSH version.
+- Document overlay network option and version.
 - Document backup engine version.
 - Document NAT conditions.
 - Document available upload/download speeds.
-- Document repository path and peer storage path.
+- Document remote repository URL shape and peer storage path.
 - Document retention policy.
 - Document restore password/key storage confirmation.
 
@@ -71,23 +74,23 @@ Checks:
 - Backup creates a snapshot.
 - Repository files are encrypted at rest on the peer.
 - Peer cannot read filenames or contents.
-- Syncthing completes initial sync.
+- Owner can reach the peer SFTP target over the private overlay.
 - Delete from source does not destroy restorable snapshot.
-- Restore from peer copy succeeds.
+- Restore from peer-hosted repository succeeds.
 - Disk-full behavior is understood.
 - Lost-peer behavior is understood.
 
 Audit evidence:
 
 - Screenshot or log of successful backup.
-- Screenshot or log of Syncthing in sync.
+- Screenshot or log of overlay and SFTP target reachability.
 - Restore command and output.
 - Checksum of restored canary file.
 - Notes on time to backup and time to restore.
 
 Exit criteria:
 
-- At least three successful backup and sync cycles.
+- At least three successful direct-to-peer backup cycles.
 - At least one successful restore from peer-held data.
 - At least one simulated deletion recovery.
 - Known failure modes documented.
@@ -99,7 +102,7 @@ Decision matrix:
 | Restore succeeds, setup takes less than 2 hours, errors are understandable | Continue to Phase 2 |
 | Restore succeeds but setup is confusing | Improve docs before Phase 2 |
 | Restore fails or encryption setup is ambiguous | Stop and redesign |
-| Sync works but restore from peer copy is not proven | Stay in Phase 1 |
+| Remote backup works but restore from peer repository is not proven | Stay in Phase 1 |
 
 ## Phase 2: Private Alpha Matching
 
@@ -142,9 +145,9 @@ Health statuses:
 | Status | Meaning |
 | --- | --- |
 | Pending | Match exists but setup not complete |
-| Syncing | Initial data transfer in progress |
-| Protected | Backup, sync, and restore drill succeeded |
-| Warning | Backup or sync stale, quota low, or peer offline |
+| Transferring | Initial backup upload in progress |
+| Protected | Backup, remote repository access, quota, and restore drill succeeded |
+| Warning | Backup stale, remote target warning, quota low, or peer offline |
 | Critical | Restore failed, peer missing, or repository unavailable |
 | Retired | Match ended and retention/deletion flow completed |
 
@@ -174,18 +177,19 @@ Scope:
 - Docker-first agent.
 - Linux/NAS first.
 - Kopia first, restic optional.
-- Syncthing installed separately or bundled by documented compose file.
+- SFTP target setup for host mode.
+- Private overlay setup for peer reachability.
 - Local configuration file.
 - Health report endpoint to web app or mock server.
 
 Agent responsibilities:
 
 - Validate backup source path.
-- Validate repository path.
-- Validate Syncthing folder is repository-only.
+- Validate remote repository target.
+- Validate host storage path is isolated and quota-bound.
 - Validate retention policy exists.
 - Validate free space and quota.
-- Run backup command.
+- Run direct-to-peer backup command.
 - Run repository verification command with `kopia snapshot verify`.
 - Run canary restore.
 - Redact logs.
@@ -205,7 +209,7 @@ Agent health checks:
 | Check | Warning | Critical |
 | --- | --- | --- |
 | Last backup age | More than 24 hours stale | More than 72 hours stale |
-| Last sync age | More than 24 hours stale | More than 72 hours stale |
+| Remote repository access | Warning from probe | Unreachable more than 72 hours |
 | Free quota | Less than 15 percent | Less than 5 percent |
 | Restore drill | Older than 30 days | Failed or never run |
 | Peer online | Offline more than 24 hours | Offline more than 7 days |
@@ -215,7 +219,7 @@ Exit criteria:
 
 - Agent can set up a test repository from clean instructions.
 - Agent detects at least five known bad configurations.
-- Agent completes backup, sync verification, and restore drill.
+- Agent completes direct remote backup, repository verification, and restore drill.
 - Telemetry review confirms no plaintext metadata leakage.
 
 Decision matrix:
@@ -288,8 +292,8 @@ Options:
 
 - One-to-two replication: each user backs up to two peers.
 - Credit pool: users earn credits by hosting and spend credits across multiple peers.
-- Managed relay/discovery: platform improves connectivity.
-- Repository copy policy: same encrypted repository replicated to multiple targets.
+- Managed overlay/relay guidance: platform improves connectivity.
+- Multi-target policy: owner backs up to more than one peer-hosted repository.
 
 Reliability controls:
 
