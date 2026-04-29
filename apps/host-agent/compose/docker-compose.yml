@@ -1,0 +1,60 @@
+services:
+  nasbb-agent:
+    build:
+      context: ..
+      dockerfile: docker/agent/Dockerfile
+    container_name: nasbb-agent
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${NASBB_API_PORT:-7420}:7420"
+    environment:
+      NASBB_CONFIG_DIR: /config
+      NASBB_STATE_DIR: /state
+      NASBB_REPOS_DIR: /repos
+      NASBB_LOG_DIR: /logs
+      NASBB_BIND_ADDR: "0.0.0.0:7420"
+      NASBB_API_TOKEN: "${NASBB_API_TOKEN:-}"
+      NASBB_SFTP_BIND: "${NASBB_SFTP_BIND:-127.0.0.1}"
+      NASBB_SFTP_PORT: "${NASBB_SFTP_PORT:-2222}"
+      NASBB_SFTP_HOST: "nasbb-sftp"
+      TAILSCALE_ADDRESS: "${TAILSCALE_ADDRESS:-}"
+    volumes:
+      - nasbb-config:/config
+      - nasbb-state:/state
+      - nasbb-repos:/repos
+      - nasbb-logs:/logs
+    networks:
+      - nasbb-internal
+    depends_on:
+      - nasbb-sftp
+
+  nasbb-sftp:
+    build:
+      context: ..
+      dockerfile: docker/sftp/Dockerfile
+    container_name: nasbb-sftp
+    restart: unless-stopped
+    ports:
+      - "${NASBB_SFTP_BIND:-127.0.0.1}:${NASBB_SFTP_PORT:-2222}:2222"
+    environment:
+      STATE_DIR: /state
+      REPOS_DIR: /repos
+    volumes:
+      - nasbb-state:/state
+      - nasbb-repos:/repos
+    networks:
+      - nasbb-internal
+
+volumes:
+  nasbb-config:
+    name: nasbb-config
+  nasbb-state:
+    name: nasbb-state
+  nasbb-repos:
+    name: nasbb-repos
+  nasbb-logs:
+    name: nasbb-logs
+
+networks:
+  nasbb-internal:
+    driver: bridge

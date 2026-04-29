@@ -1,0 +1,18 @@
+Port 2222
+ListenAddress 0.0.0.0
+HostKey /state/sftp-host-keys/ssh_host_ed25519_key
+PermitRootLogin no
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+UsePAM no
+StrictModes no
+X11Forwarding no
+AllowTcpForwarding no
+PrintMotd no
+Subsystem sftp internal-sftp
+AuthorizedKeysFile /state/users/%u/authorized_keys
+Match Group nasbb
+  ForceCommand internal-sftp
+  ChrootDirectory /repos/%u
+  AllowTcpForwarding no
+  X11Forwarding no
