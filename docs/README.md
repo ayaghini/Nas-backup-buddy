@@ -6,7 +6,7 @@ Start here when working on the project.
 
 - Feasibility and architecture docs are in place.
 - `apps/web` contains the current coordination web prototype.
-- `apps/client` contains the current Tauri + Rust desktop client with Peer Connection setup, local persistence, folder pickers, recovery-key handling, generated-data Kopia backup/verify/restore testing, Kopia-over-SFTP/private-overlay flows, and fail-closed bundled-tool verification. Syncthing is legacy/developer-only.
+- `apps/client` contains the current Tauri + Rust desktop client with a Docker-backed Host tab, local persistence, folder pickers, recovery-key handling, generated-data Kopia backup/verify/restore testing, Kopia-over-SFTP/private-overlay flows, and fail-closed bundled-tool verification. The next owner-side setup surface is the planned `Peer` tab; Syncthing is legacy/developer-only.
 - Release foundations have started with AGPL-3.0-only and a third-party notices placeholder.
 - The project is not production-ready.
 
@@ -37,6 +37,7 @@ Start here when working on the project.
 - [Docker Host Agent Implementation Brief](host-agent/docker-host-agent-implementation.md)
 - [Docker Host Agent: Agent Implementation Plan](host-agent/agent-implementation-plan.md) ← start here to build the host agent
 - [Docker Host Agent: API Contract](host-agent/api-contract.md) ← produced by Stage 11
+- [Docker Host Agent Runbook](host-agent/runbook.md)
 
 ## Release Foundations
 
@@ -57,7 +58,7 @@ Start here when working on the project.
 
 - [Implement Client App Prompt](prompts/implement-client-app.md)
 - [Implement Docker Host Tab Prompt](prompts/implement-host-tab.md)
-- [Implement Peer Connection Redesign Prompt](prompts/implement-peer-connection-redesign.md)
+- [Implement Peer Tab Prompt](prompts/implement-peer-tab.md)
 - [Project Next Steps Agent Prompt](prompts/project-next-steps.md)
 
 ## Decision Records

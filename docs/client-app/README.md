@@ -30,7 +30,11 @@ The client has moved beyond the original mock-only scaffold. The current app can
 - Restore the canary file and compare SHA-256 checksums.
 - Build a health report from actual backup, verification, and restore-drill outcomes.
 
-The current Syncthing work is legacy safety/configuration work from the earlier transport direction. The next implementation target is Kopia SFTP repository creation/connection, overlay reachability checks, and host-side SFTP target validation.
+The current Host tab is the active storage-provider path. It manages the Docker host-agent stack, host-agent API token connection, Tailscale/SFTP environment, allocations, Host Invite Bundle export, Owner Access Response import, host health, events, logs, and verification.
+
+The next implementation target is the owner-side `Peer` tab. It should replace the old `Peer Connection`/`Peer Storage` owner flow with invite import, owner SSH key/access response generation, SFTP verification, Kopia SFTP repository creation/connection, backup execution, and next-step guidance.
+
+The current Syncthing work is legacy safety/configuration work from the earlier transport direction.
 
 Mock/browser fallback remains useful for UI development without Tauri, but it is no longer the main client-readiness signal.
 
@@ -53,7 +57,7 @@ Target platforms:
 - macOS.
 - Linux desktop.
 
-Headless Docker/NAS deployment remains important, but the first real client app is the desktop plus local service path. The old `apps/agent` notes remain useful for future headless packaging.
+Docker/NAS deployment is now represented by `apps/host-agent` for storage hosts. The old `apps/agent` notes remain legacy/future headless packaging context.
 
 ## User Modes
 
@@ -64,9 +68,13 @@ The user backs up their own data directly to an encrypted Kopia repository on a 
 The client must help them:
 
 - Select source folders.
+- Import a Host Invite Bundle from the storage host by paste or file.
+- Generate or reference a per-match owner SSH key.
+- Export an Owner Access Response for the host.
+- Verify SFTP auth/write access after the host imports that response.
 - Create or connect an encrypted Kopia SFTP repository.
 - Confirm their recovery password/key is saved outside the platform.
-- Configure private overlay and SFTP target details.
+- Use private overlay and SFTP target details from the invite unless explicitly overridden.
 - Run restore drills.
 - Report health metadata.
 
@@ -76,8 +84,10 @@ The user offers spare storage for another user's encrypted repository.
 
 The client must help them:
 
-- Select a hosted peer-storage folder.
-- Set a quota.
+- Run and configure the Docker host-agent stack.
+- Create hosted allocations with quota.
+- Export Host Invite Bundle JSON.
+- Import Owner Access Response JSON.
 - Confirm they understand the data is encrypted and must not be modified.
 - Monitor disk space.
 - Report availability and quota health.

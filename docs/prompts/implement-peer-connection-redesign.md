@@ -1,4 +1,12 @@
-# Implement Peer Connection Host-First Flow
+# Deprecated: Implement Peer Connection Host-First Flow
+
+This prompt is stale. Do not use it for new work.
+
+Use [Implement Peer Tab Prompt](implement-peer-tab.md) instead. The current architecture uses a Docker-backed `Host` tab for storage providers and a planned `Peer` tab for data owners. The old `Peer Connection` flow should be removed from primary navigation when `Peer` lands.
+
+---
+
+# Historical Prompt: Implement Peer Connection Host-First Flow
 
 Goal: make `/peer-connection` a guided Tailscale + SFTP setup page where a storage host can fully allocate space before knowing the data owner's SSH key.
 

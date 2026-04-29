@@ -10,7 +10,7 @@ The key claim to prove is that the data owner can restore from a peer-hosted enc
 
 - Kopia for first test.
 - Tailscale, Headscale, or WireGuard for private peer reachability.
-- OpenSSH/SFTP on the storage host.
+- Docker host-agent stack on the storage host (`apps/host-agent`) providing SFTP.
 - A small sample dataset.
 - A canary file with known content and checksum.
 
@@ -29,7 +29,7 @@ Record:
 - Host OS and version.
 - Backup engine and version.
 - Overlay network option and version.
-- SFTP server and SSH version.
+- Host-agent version and SFTP host-key fingerprint.
 - Owner upload speed.
 - Host upload speed.
 - Host available free space.
@@ -40,8 +40,8 @@ Confirm:
 
 - The sample data is non-sensitive.
 - The backup password is stored outside the test machine.
-- The host SFTP account/path is isolated from the host's own data and from other matches.
-- Host quota is configured or manually monitored for the test.
+- The host-agent allocation path is isolated from the host's own data and from other matches.
+- Host-agent quota is configured or manually monitored for the test.
 - The host understands they should not inspect, modify, or delete the encrypted repository.
 - The source folder is not shared directly with the host.
 
@@ -49,18 +49,20 @@ Confirm:
 
 1. Configure private overlay connectivity between owner and host.
 2. Install Kopia on the owner machine.
-3. Configure an isolated SFTP account/path on the host.
+3. In the Host tab, start the Docker host-agent, configure Tailscale/SFTP bind settings, create an allocation, and export a Host Invite Bundle.
 4. Create a sample source directory on the owner.
 5. Add a canary file and record its checksum.
-6. Create a Kopia SFTP repository on the host target.
-7. Create the first snapshot.
-8. Inspect the host target and confirm it does not expose plaintext file names or contents.
-9. Delete or modify a sample source file.
-10. Create another snapshot.
-11. Run repository verification with `kopia snapshot verify`.
-12. Restore from the peer-hosted repository to a clean local destination.
-13. Verify the canary checksum.
-14. Record local owner-side storage used by Kopia cache/temp files versus source data size.
+6. In the Peer tab, import the Host Invite Bundle, generate an Owner Access Response, and send it to the host.
+7. In the Host tab, import the Owner Access Response and confirm the allocation is READY.
+8. In the Peer tab, verify SFTP and create/connect the Kopia SFTP repository.
+9. Create the first snapshot.
+10. Inspect the host target and confirm it does not expose plaintext file names or contents.
+11. Delete or modify a sample source file.
+12. Create another snapshot.
+13. Run repository verification with `kopia snapshot verify`.
+14. Restore from the peer-hosted repository to a clean local destination.
+15. Verify the canary checksum.
+16. Record local owner-side storage used by Kopia cache/temp files versus source data size.
 
 ## Required Evidence
 

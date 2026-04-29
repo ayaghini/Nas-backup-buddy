@@ -14,15 +14,21 @@ Future website for user profiles, matching, backup pacts, health dashboards, rep
 apps/client
 ```
 
-Future cross-platform desktop client. This is the first real client-app target: Tauri + React + TypeScript UI with a local Rust service. It should manage Kopia, SFTP remote repository targets, private overlay reachability, safe folder layout, backups, restore drills, and only allowlisted operational metadata. Syncthing work is legacy/optional mirror-mode context unless it is deliberately reintroduced.
+Cross-platform desktop client: Tauri + React + TypeScript UI with a local Rust service. It manages Kopia, SFTP remote repository targets, private overlay reachability, safe folder layout, backups, restore drills, the Docker-backed Host tab, and only allowlisted operational metadata. Syncthing work is legacy/developer context unless it is deliberately reintroduced.
 
-Current scaffold includes UI placeholder views and Rust core modules for config validation, health mapping, safe folder checks, redaction, and tool manifest modeling.
+Current scaffold includes interactive UI views, Rust core modules for config validation, health mapping, safe folder checks, redaction, tool manifest modeling, Kopia execution, SFTP verification, and host-agent Docker controls.
+
+```text
+apps/host-agent
+```
+
+Docker host-agent stack for storage providers. It includes the Go `nasbb-agent` API, the OpenSSH `nasbb-sftp` container, Compose files, allocation lifecycle, Host Invite Bundle generation, Owner Access Response import, soft quota monitoring, and integration tests.
 
 ```text
 apps/agent
 ```
 
-Legacy/future headless agent notes for NAS and Docker-style deployments. Keep this path for later packaging work unless the desktop client and headless service are intentionally merged.
+Legacy/future headless agent notes. The active Docker host implementation is `apps/host-agent`.
 
 ```text
 infra/syncthing

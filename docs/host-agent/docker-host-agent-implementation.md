@@ -24,7 +24,7 @@ Data owner source folders
 
 The storage host must never receive backup passwords, private keys, plaintext source files, or plaintext file names from the data owner. The host provides isolated storage and network reachability only.
 
-The current desktop app already guides users through owner-side setup, Tailscale/SFTP checks, host invite bundles, owner access requests, Kopia repository creation, restore drills, and health checks. This Docker host agent should make the host side much easier and more repeatable.
+The desktop app now has a Docker-backed Host tab for storage providers. The owner-side flow is being consolidated into the planned Peer tab, which should handle Host Invite Bundle import, Owner Access Response generation, SFTP checks, Kopia repository creation, restore drills, and health checks.
 
 ## Project Goal
 
@@ -523,4 +523,3 @@ Avoid:
 ## Success Definition
 
 This work is successful when a Linux host can start the Docker runtime, configure hosting through the API/UI path, host multiple isolated encrypted repository allocations, exchange one invite and one owner response file, and pass an owner-side SFTP write test with no manual host OS account or `sshd_config` setup.
-

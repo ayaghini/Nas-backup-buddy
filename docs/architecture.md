@@ -17,13 +17,15 @@ flowchart LR
   SRC["Data owner source folders"] --> K["Kopia backup engine"]
   K --> ENC["Client-side encrypted snapshots"]
   ENC --> OVERLAY["Private overlay network<br/>Tailscale / Headscale / WireGuard"]
-  OVERLAY --> SFTP["Storage host SFTP target<br/>isolated account + quota"]
+  OVERLAY --> SFTP["Docker host-agent SFTP target<br/>isolated account + quota"]
   SFTP --> REPO["Encrypted Kopia repository<br/>on peer storage"]
   WEB["NAS Backup Buddy web app"] --> MATCH["Matching and pact"]
   WEB --> HEALTH["Health dashboard"]
-  AGENT["Desktop client / local service"] --> K
-  AGENT --> OVERLAY
-  AGENT --> WEB
+  OWNER["Peer tab<br/>data-owner client"] --> K
+  OWNER --> OVERLAY
+  OWNER --> WEB
+  HOST["Host tab<br/>Docker host-agent"] --> SFTP
+  HOST --> OVERLAY
 ```
 
 ## Why This Pivot
@@ -64,7 +66,9 @@ Responsibilities:
 
 - Select source folders.
 - Store backup secrets locally.
-- Create or connect a Kopia repository on the matched peer's SFTP target.
+- Import a Host Invite Bundle from the storage host.
+- Generate or select an owner SSH key and export an Owner Access Response.
+- Create or connect a Kopia repository on the matched host-agent SFTP target.
 - Run scheduled Kopia snapshots.
 - Run repository verification with `kopia snapshot verify`.
 - Run restore drills and canary checksum checks.
@@ -74,9 +78,12 @@ Responsibilities:
 
 Responsibilities:
 
-- Create an isolated hosted-storage namespace for a match.
+- Run and manage the Docker host-agent stack from the Host tab.
+- Create an isolated hosted-storage allocation for a match.
+- Export Host Invite Bundle JSON for the data owner.
+- Import Owner Access Response JSON and authorize only the owner's public key.
 - Expose SFTP only over the private overlay network.
-- Enforce quota and path isolation.
+- Enforce path isolation and soft quota in the Docker host-agent; hard quota is future infrastructure work.
 - Monitor free space and reachability.
 - Report host-side availability and quota health.
 - Avoid inspecting, modifying, or deleting encrypted repository data except through an agreed retirement process.
@@ -100,7 +107,7 @@ Responsibilities:
 
 ### Private Overlay Network
 
-Default direction: support Tailscale first for usability through the desktop client's Peer Connection flow. Headscale and plain WireGuard remain advanced/future paths.
+Default direction: support Tailscale first. The Host tab configures `NASBB_SFTP_BIND` and `TAILSCALE_ADDRESS` for the Docker host-agent, while the Peer tab uses the invite's advertised address to probe and connect. Headscale and plain WireGuard remain advanced/future paths.
 
 Responsibilities:
 
@@ -114,8 +121,8 @@ Responsibilities:
 Responsibilities:
 
 - Provide a simple remote filesystem target for Kopia.
-- Use an isolated account, chroot/jail, container, or equivalent path boundary.
-- Apply quota at the filesystem, dataset, container, or account level.
+- Use the Docker host-agent's per-allocation SFTP user and chroot boundary.
+- Apply the host-agent's soft quota in v1; filesystem/dataset hard quota remains a host infrastructure upgrade.
 - Log only operational connection events, not file contents or backup secrets.
 
 ### Syncthing
@@ -134,13 +141,14 @@ Syncthing must still never sync live source folders directly to peers.
 ## Data Flow
 
 1. The web app matches a data owner with a storage host and records the pact.
-2. The host client creates an isolated SFTP target and quota for the match.
-3. The Peer Connection flow establishes Tailscale reachability and guides host-space or backup-target setup.
-4. The owner client stores the backup password locally and creates a Kopia SFTP repository on the host target.
-5. Kopia snapshots selected source folders directly to the remote encrypted repository.
-6. The owner client runs repository verification and restore drills.
-7. The owner and host clients report allowlisted health metadata to the web app.
-8. Protected status is allowed only after backup, remote reachability, quota, restore drill, key backup, and telemetry checks pass.
+2. The host opens `Host`, runs or connects to the Docker host-agent stack, creates an allocation, and exports a Host Invite Bundle.
+3. The owner opens `Peer`, imports the invite, generates an owner SSH key, and exports an Owner Access Response.
+4. The host imports the response in `Host`; the host-agent activates SFTP access for that public key.
+5. The owner stores the backup password locally and creates or connects a Kopia SFTP repository on the host-agent target.
+6. Kopia snapshots selected source folders directly to the remote encrypted repository.
+7. The owner client runs repository verification and restore drills.
+8. The owner and host clients report allowlisted health metadata to the web app when that API exists.
+9. Protected status is allowed only after backup, remote reachability, quota, restore drill, key backup, and telemetry checks pass.
 
 ## Trust Boundaries
 

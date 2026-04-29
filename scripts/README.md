@@ -7,8 +7,8 @@ Add scripts only after the manual procedure is documented in `docs/runbooks/` an
 Candidate future scripts:
 
 - POC environment setup.
-- Syncthing config validation.
+- Host-agent smoke-test helpers.
+- Peer invite/response validation helpers.
 - Kopia/restic repository health check wrapper.
 - Canary restore verification.
 - Agent diagnostic bundle generator.
-

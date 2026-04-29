@@ -141,116 +141,59 @@ ping <machine-b-overlay-ip-or-hostname>
 
 ## Step 2: Host setup on Machine B
 
-Use the NAS Backup Buddy client app **Host Setup** tab, or run these steps manually.
+Use the NAS Backup Buddy client app **Host** tab. The current v1 host path is the Docker host-agent stack, not manual OS user creation.
 
-### 2a. Create isolated SFTP user
+1. Open **Host**.
+2. Confirm Docker and Docker Compose prerequisites pass.
+3. Generate or enter an API token and save it to `.env`.
+4. Start the host stack.
+5. In **Tailscale & Network**, set:
+   - `NASBB_SFTP_BIND` to Machine B's Tailscale IPv4 address.
+   - `TAILSCALE_ADDRESS` to Machine B's MagicDNS hostname or Tailscale address.
+6. Restart the stack after changing host settings.
+7. Create an allocation with the trial quota.
+8. Export the Host Invite Bundle JSON.
+9. Send the invite JSON to Machine A out-of-band.
 
-```bash
-# Linux example
-sudo useradd --system --create-home --shell /usr/sbin/nologin nasbb-match-1
-
-# macOS — use System Settings or dscl (see Host Setup tab for full commands)
-```
-
-### 2b. Create repository directory
-
-```bash
-sudo mkdir -p /home/nasbb-match-1/repository
-sudo chown -R nasbb-match-1:nasbb-match-1 /home/nasbb-match-1
-sudo chmod 700 /home/nasbb-match-1
-```
-
-### 2c. Generate SSH keypair on Machine A
-
-```bash
-# On Machine A — generate a dedicated key for this match
-ssh-keygen -t ed25519 -f ~/.ssh/nasbb-match-1 -C "" -N ""
-# -N "" sets an empty passphrase; use a passphrase for production
-
-# Print the public key — you will paste this into Machine B
-cat ~/.ssh/nasbb-match-1.pub
-```
-
-### 2d. Install public key on Machine B
-
-```bash
-# On Machine B
-sudo mkdir -p /home/nasbb-match-1/.ssh
-sudo chmod 700 /home/nasbb-match-1/.ssh
-
-# Paste the public key from Machine A:
-echo 'ssh-ed25519 AAAA... ' | sudo tee /home/nasbb-match-1/.ssh/authorized_keys
-sudo chmod 600 /home/nasbb-match-1/.ssh/authorized_keys
-sudo chown -R nasbb-match-1:nasbb-match-1 /home/nasbb-match-1/.ssh
-```
-
-### 2e. Configure SFTP-only access (Linux sshd)
-
-Add to `/etc/ssh/sshd_config` on Machine B:
+The invite JSON looks like:
 
 ```
-Match User nasbb-match-1
-    ChrootDirectory /home/nasbb-match-1
-    ForceCommand internal-sftp
-    AllowTcpForwarding no
-    X11Forwarding no
+{
+  "bundleVersion": 1,
+  "kind": "nasbb.host_invite",
+  "matchId": "match-abc123",
+  "allocId": "alloc_a1b2c3d4e5f6",
+  "sftp": {
+    "host": "machine-b.tailnet.ts.net",
+    "port": 2222,
+    "username": "nabb_1234abcd",
+    "path": "/repository"
+  },
+  "hostKey": {
+    "fingerprintSha256": "SHA256:..."
+  },
+  "expiresAt": "2026-07-27T00:00:00Z"
+}
 ```
 
-```bash
-# Verify config, then reload
-sudo sshd -t
-sudo systemctl reload sshd
-```
-
-### 2f. Set quota (optional for trial)
-
-```bash
-# ZFS example
-sudo zfs set quota=50G zpool/home/nasbb-match-1
-
-# ext4 quota — see Host Setup tab for full commands
-```
+No passwords or private keys are in the invite.
 
 ---
 
-## Step 2f: Generate Owner Connection Bundle on Machine B
+## Step 2b: Owner response on Machine A
 
-After completing steps 2a–2e, Machine B uses the NAS Backup Buddy client app to generate the
-Owner Connection Bundle.
+Use the planned **Peer** tab when implemented. Until then, use the implementation prompt in `docs/prompts/implement-peer-tab.md` as the source of truth for the owner flow.
 
-1. On Machine B, open the **Host Setup** tab in the NAS Backup Buddy app.
-2. Fill in the match details (Match ID, hosted path, quota, SFTP username, overlay address).
-3. Paste Machine A's SSH public key (from step 2c) into the Owner SSH Public Key field.
-4. Click **Generate Host Setup Plan**.
-5. Copy the **Owner Connection Bundle** text block shown at the bottom.
+Expected Peer tab flow:
 
-The bundle looks like:
+1. Open **Peer**.
+2. Paste or import the Host Invite Bundle JSON.
+3. Confirm the host key fingerprint out-of-band.
+4. Generate the owner SSH key and Owner Access Response JSON.
+5. Send the response JSON to Machine B.
+6. Wait for Machine B to import the response in **Host -> Allocations**.
 
-```
-overlay_provider: tailscale
-overlay_host:     machine-b.tailnet.ts.net
-sftp_user:        nasbb-match-1
-sftp_port:        22
-sftp_path:        /repository
-quota_gb:         50
-match_id:         match-trial-1
-
-# Verify host key: ssh-keyscan -p 22 machine-b.tailnet.ts.net | ssh-keygen -lf -
-# Connectivity: Machine A must be able to reach this host (via sharing/invite — shared account not required)
-```
-
-Send this bundle text to Machine A out-of-band (e.g. Signal, encrypted email).
-**No passwords or private keys are in the bundle** — it is safe to send over any channel.
-
----
-
-## Step 2g: Import bundle on Machine A
-
-1. On Machine A, open the **Peer Storage** tab.
-2. Click **Import Owner Connection Bundle** to expand the import panel.
-3. Paste the full bundle text received from Machine B.
-4. Click **Parse and import** — all connection fields are auto-filled.
-5. The bundle fields are saved to local storage for the next session.
+Machine B then imports the Owner Access Response in **Host**. The Docker host-agent writes the owner's public key to the allocation and activates SFTP access.
 
 ---
 
@@ -258,27 +201,27 @@ Send this bundle text to Machine A out-of-band (e.g. Signal, encrypted email).
 
 ### Option A: Use the app (recommended)
 
-1. In the **Peer Storage** tab, fill in the SSH key path (from step 2c) in the SSH key field.
-2. Click **Probe TCP** — confirms overlay network is up and port is open.
-3. Click **Verify SFTP** — verifies SSH authentication, path access, and write test.
+1. In the **Peer** tab, confirm the invite is imported and the host has imported the Owner Access Response.
+2. Click **Verify SFTP** — verifies SSH authentication, path access, and write test.
    - **Expected result:** `SFTP verified` with write test passed.
 
 ### Option B: Command line
 
 ```bash
 # From Machine A — confirm SFTP login works
-sftp -i ~/.ssh/nasbb-match-1 -P 22 nasbb-match-1@<machine-b-overlay-host>
+sftp -i <owner-private-key-path> -P 2222 nabb_1234abcd@<machine-b-overlay-host>
 # Expect: sftp> prompt
 # Type: ls
-# Expect: repository/ directory listed
+# Expect: chrooted repository contents
 # Type: exit
 ```
 
 If this fails, check:
 - Overlay connectivity (`ping <host>`)
-- SSH daemon running (`sudo systemctl status sshd`)
-- Correct public key in `authorized_keys`
-- `sshd_config` syntax (`sudo sshd -t`)
+- Docker host stack running on Machine B.
+- Host tab SFTP bind uses Machine B's Tailscale IP, not `127.0.0.1`.
+- Machine B imported the Owner Access Response in Host.
+- Host-agent health shows SFTP running and no public exposure warning.
 
 ---
 
@@ -298,7 +241,7 @@ cat /tmp/nasbb-trial/canary.sha256
 
 ### Option A: Use the app (recommended after SFTP verify succeeds)
 
-1. In the **Peer Storage** tab, confirm SFTP Verification shows `SFTP verified`.
+1. In the **Peer** tab, confirm SFTP Verification shows `SFTP verified`.
 2. Set your backup password in the **Recovery Key** tab if not already done.
 3. Click **Create / Connect SFTP Repository**.
 4. Expected result: `Repository connected`.
@@ -311,10 +254,10 @@ export KOPIA_PASSWORD="<your-backup-password>"
 
 kopia repository create sftp \
   --host <machine-b-overlay-host> \
-  --port 22 \
-  --username nasbb-match-1 \
+  --port 2222 \
+  --username nabb_1234abcd \
   --path /repository \
-  --keyfile ~/.ssh/nasbb-match-1 \
+  --keyfile <owner-private-key-path> \
   --config-file /tmp/nasbb-trial/kopia.config.json
 
 # Expect: "Initialized encrypted repository..."

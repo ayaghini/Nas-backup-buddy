@@ -1,13 +1,13 @@
 # Headless Agent Notes
 
-The first real client-app target is now documented in [Client App Overview](../../docs/client-app/README.md): a cross-platform Tauri + Rust desktop client with a local background service.
+The first real client-app target is documented in [Client App Overview](../../docs/client-app/README.md): a cross-platform Tauri + Rust desktop client with a local background service.
 
-This directory remains for future headless/NAS packaging work, such as Docker, Unraid, TrueNAS, Synology, or server-only deployments. Do not treat this directory as the primary client app unless the architecture is intentionally changed.
+The active Docker storage-host implementation lives in `apps/host-agent`. This directory remains for future headless/NAS owner-side packaging work, such as Unraid, TrueNAS, Synology, or server-only deployments. Do not treat this directory as the primary client app or Docker host-agent unless the architecture is intentionally changed.
 
 Future headless agent responsibilities are still expected to mirror the desktop local service:
 
 - Configure Kopia or restic backup repositories.
-- Configure Syncthing folders for encrypted repository replication.
+- Connect to host-agent SFTP targets from imported Host Invite Bundles.
 - Enforce local storage quotas.
 - Report health metadata to the web app.
 - Run restore drills against canary data.

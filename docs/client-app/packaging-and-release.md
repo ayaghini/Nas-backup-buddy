@@ -38,7 +38,7 @@ Each release must include a manifest for bundled tools:
 | Source/download reference | Yes |
 | Update notes | Yes |
 
-Kopia and Syncthing are required in v1. Restic is future optional support.
+Kopia is required in v1. Syncthing is legacy/developer support and should not be treated as a release-blocking runtime dependency unless a release explicitly includes legacy mirror mode. Restic is future optional support.
 
 ## Checksum Verification
 
@@ -48,7 +48,7 @@ Release process must record:
 
 - App artifact checksums.
 - Bundled Kopia checksums.
-- Bundled Syncthing checksums.
+- Bundled Syncthing checksums only for releases that include legacy/developer Syncthing binaries.
 - Tool manifest checksum.
 
 The client must fail closed when a tool binary checksum does not match.
@@ -79,7 +79,7 @@ Track at least:
 - Rust crates.
 - React and TypeScript dependencies.
 - Kopia.
-- Syncthing.
+- Syncthing only if included in the release artifact.
 - Packaging/signing tools.
 
 The inventory should list package name, version, license, and source URL.
@@ -93,7 +93,7 @@ Audience:
 Supported platforms:
 Signing status:
 Bundled Kopia version:
-Bundled Syncthing version:
+Bundled Syncthing version, if included:
 New features:
 Safety fixes:
 Known limitations:
@@ -111,7 +111,7 @@ Upgrades must preserve:
 - Tool manifest history.
 - Previous health records needed for audit.
 
-If an upgrade changes Kopia or Syncthing versions, release notes must call it out.
+If an upgrade changes Kopia or any included Syncthing binary, release notes must call it out.
 
 ## Rollback Policy
 

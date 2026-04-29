@@ -72,7 +72,7 @@ Decision gate:
 
 Goal: make safe setup understandable.
 
-Status: implemented for local pre-alpha use, but the wizard still reflects parts of the old local-repository/Syncthing model. The next iteration should ask data owners for source folders, backup secret confirmation, remote SFTP target details, overlay peer address, retention, and restore-drill settings. Storage hosts should configure hosted storage path, quota, overlay address, and isolated SFTP target details.
+Status: implemented for local pre-alpha use, but the wizard still reflects parts of the old local-repository/Syncthing model. Storage-host setup has moved to the Docker-backed Host tab. The next owner-side iteration should move remote SFTP target setup into a dedicated Peer tab driven by Host Invite Bundle import.
 
 Deliverables:
 
@@ -80,9 +80,9 @@ Deliverables:
 - Role selection: Data Owner, Storage Host, Reciprocal Match.
 - Source folder selection.
 - Remote repository target selection or entry.
-- Hosted storage path and quota setup.
-- Overlay connection setup.
-- SFTP target setup.
+- Peer tab entry point for Host Invite Bundle import.
+- Owner SSH key and Owner Access Response generation.
+- Overlay/SFTP target setup from the invite.
 - Retention policy screen.
 - Recovery password/key backup confirmation.
 - Pairing token screen.
@@ -107,7 +107,7 @@ Exit criteria:
 
 Goal: make remote backup target management predictable and safe.
 
-Status: SFTP integration implemented. Tool manifest, SHA-256 verification, and generated-data Kopia execution exist. SFTP `create_repository`/`connect_repository` Kopia runner methods are complete. Per-target Kopia config isolation via `SftpRepoTarget::config_id()` prevents one peer's config from being reused for another. Overlay TCP probe is live; it confirms port reachability only (SSH/SFTP auth is left to Kopia). The Peer Storage view wires probe and connect results to shared AppContext state so Health Checks update automatically. Two-machine restore evidence and production SSH key credential management remain future work.
+Status: SFTP integration implemented. Tool manifest, SHA-256 verification, and generated-data Kopia execution exist. SFTP `create_repository`/`connect_repository` Kopia runner methods are complete. Per-target Kopia config isolation via `SftpRepoTarget::config_id()` prevents one peer's config from being reused for another. Overlay TCP probe and SFTP auth/write verification exist. The Docker Host tab now creates host-agent allocations and exports invites; the next step is replacing older Peer Storage/Peer Connection owner UI with the new Peer tab. Two-machine restore evidence and production SSH key credential management remain future work.
 
 Deliverables:
 
@@ -118,6 +118,8 @@ Deliverables:
 - Fail-closed behavior for missing or mismatched binaries.
 - SFTP target validator.
 - Overlay reachability probe.
+- Host Invite Bundle parser.
+- Owner Access Response generator.
 - Kopia SFTP repository create/connect flow.
 - README notes for updating pinned tool versions.
 

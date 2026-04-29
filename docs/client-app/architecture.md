@@ -12,8 +12,10 @@ flowchart LR
   SVC --> CFG["Local config store<br/>TOML + OS keychain"]
   SVC --> TOOLS["Bundled tool manager"]
   TOOLS --> KOPIA["Pinned Kopia"]
-  SVC --> OVERLAY["Peer Connection manager<br/>Tailscale + SFTP setup"]
-  SVC --> SFTP["SFTP target manager"]
+  SVC --> PEER["Peer tab manager<br/>invite import + SFTP/Kopia setup"]
+  SVC --> HOST["Host tab manager<br/>Docker host-agent"]
+  HOST --> DOCKER["Docker Compose<br/>nasbb-agent + nasbb-sftp"]
+  PEER --> SFTP["Owner SFTP target manager"]
   KOPIA --> REMOTE["Peer-hosted encrypted Kopia repository"]
   SVC --> HEALTH["Health reporter<br/>allowlisted metadata"]
   HEALTH --> WEB["NAS Backup Buddy web app"]
@@ -30,7 +32,8 @@ Responsibilities:
 - Onboarding wizard.
 - Dashboard.
 - Backup plan view.
-- Peer Connection view for Tailscale, host spaces, and backup targets.
+- Host view for Docker host-agent setup and storage allocations.
+- Peer view for data-owner Host Invite Bundle import, Owner Access Response export, SFTP verification, and Kopia repository setup.
 - Restore drill view.
 - Health checks.
 - Redacted logs.
@@ -72,21 +75,37 @@ Responsibilities:
 
 - Detect whether the device is reachable through Tailscale.
 - Record the matched peer's overlay address or hostname.
-- Feed Host Spaces and Backup Targets from one guided Peer Connection flow.
+- Feed the Host tab's advertised address/bind recommendations and the Peer tab's reachability checks.
 - Avoid public inbound port assumptions.
 
 The first implementation can be manual/instructional, but health checks must eventually distinguish "overlay not configured" from "peer unreachable."
 
-### SFTP Target Manager
+### Docker Host-Agent Manager
 
 Responsibilities:
 
-- Data owner mode: validate remote SFTP settings and create/connect the Kopia repository on the peer target.
-- Storage host mode: guide or automate isolated account/path creation.
-- Validate host quota and storage path.
+- Check Docker and Docker Compose prerequisites.
+- Read and write `apps/host-agent/compose/.env` without deleting unknown user settings.
+- Start, stop, restart, and inspect the `apps/host-agent` Docker Compose stack.
+- Connect to the host-agent API at `http://127.0.0.1:7420/api/v1` using a bearer token.
+- Create allocations, export Host Invite Bundle JSON, import Owner Access Response JSON, and manage allocation lifecycle.
+- Surface host-agent health, SFTP exposure warnings, events, logs, and verification output.
+
+The Host tab is the source of truth for storage-provider setup. Legacy display-only host command plans are not part of the v1 host path.
+
+### Peer SFTP Target Manager
+
+Responsibilities:
+
+- Import and validate a Host Invite Bundle.
+- Generate or reference a per-match owner SSH key.
+- Export Owner Access Response JSON for the host.
+- Verify TCP/SFTP reachability, SSH auth, path access, and write access.
+- Create/connect the Kopia repository on the host-agent SFTP target.
+- Restore saved invite and connection state after app restart without storing private key material in plaintext config.
 - Redact usernames, hosts, paths, and command output where needed.
 
-The host target should use an isolated account, chroot/jail, container, dataset, or equivalent boundary.
+The host target uses the Docker host-agent's per-allocation SFTP user and chroot boundary.
 
 ### Local Config Store
 
@@ -135,11 +154,11 @@ sequenceDiagram
   participant O as Overlay
   participant H as Host SFTP target
 
-  U->>UI: Choose role, source folders, and peer target
+  U->>UI: Import host invite, choose source folders, and confirm backup secret
   UI->>S: Submit draft setup
   S->>S: Validate role, quota, paths, and target fields
   S->>O: Verify peer overlay address can be reached
-  S->>H: Verify isolated SFTP target and quota
+  S->>H: Verify SFTP auth, path access, and write access
   S->>K: Create or connect encrypted remote repository
   S->>S: Save local config and secret references
   S-->>UI: Setup status and safety checks
@@ -232,3 +251,11 @@ Rules for any Syncthing mode:
 - It must be clearly labeled as mirror/advanced mode.
 - The UI must explain that it can require a local encrypted repository copy.
 - It must not be the default v1 path.
+
+## Deprecated UI Surfaces
+
+`Peer Connection`, `Peer Storage`, `Overlay Setup`, and manual `Host Setup` command-plan flows are not the target v1 setup surfaces after the Docker host-agent work. Keep compatibility redirects only as long as needed during migration:
+
+- `/host-setup` should redirect to `/host`.
+- `/peer-connection`, `/peer-storage`, and `/overlay` should be removed from primary navigation when `Peer` lands.
+- The new `Peer` tab should absorb only the data-owner functionality that is still valid: invite import, owner SSH key/access response, SFTP verification, Kopia repository create/connect, backup run, and next-step guidance.

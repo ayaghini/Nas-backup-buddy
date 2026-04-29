@@ -174,10 +174,12 @@ Goal: reduce setup errors and collect health metadata safely.
 
 Scope:
 
-- Docker-first agent.
-- Linux/NAS first.
+- Docker-first host-agent for storage providers.
+- Desktop `Peer` flow for data owners.
+- Linux/NAS first on the host side.
 - Kopia first, restic optional.
-- SFTP target setup for host mode.
+- Docker host-agent allocation and SFTP target setup for host mode.
+- Host Invite Bundle import and Owner Access Response generation for owner mode.
 - Private overlay setup for peer reachability.
 - Local configuration file.
 - Health report endpoint to web app or mock server.
@@ -186,7 +188,7 @@ Agent responsibilities:
 
 - Validate backup source path.
 - Validate remote repository target.
-- Validate host storage path is isolated and quota-bound.
+- Validate host-agent allocation path is isolated and quota-bound.
 - Validate retention policy exists.
 - Validate free space and quota.
 - Run direct-to-peer backup command.
@@ -217,9 +219,10 @@ Agent health checks:
 
 Exit criteria:
 
-- Agent can set up a test repository from clean instructions.
-- Agent detects at least five known bad configurations.
-- Agent completes direct remote backup, repository verification, and restore drill.
+- Host tab can bring up the Docker host-agent stack, create an allocation, export an invite, import an owner response, and verify the stack.
+- Peer tab can import the invite, generate an owner response, verify SFTP access after host authorization, and create/connect the Kopia repository.
+- Client detects at least five known bad configurations.
+- Client completes direct remote backup, repository verification, and restore drill.
 - Telemetry review confirms no plaintext metadata leakage.
 
 Decision matrix:
