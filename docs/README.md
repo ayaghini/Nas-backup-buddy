@@ -32,6 +32,12 @@ Start here when working on the project.
 - [Client App Packaging And Release](client-app/packaging-and-release.md)
 - [Client App Current Audit](client-app/current-audit.md)
 
+## Host Agent
+
+- [Docker Host Agent Implementation Brief](host-agent/docker-host-agent-implementation.md)
+- [Docker Host Agent: Agent Implementation Plan](host-agent/agent-implementation-plan.md) ← start here to build the host agent
+- [Docker Host Agent: API Contract](host-agent/api-contract.md) ← produced by Stage 11
+
 ## Release Foundations
 
 - [Repository License](../LICENSE)
@@ -57,6 +63,7 @@ Start here when working on the project.
 
 - [ADR 0001: Use Backup Engine Plus Syncthing](adr/0001-use-backup-engine-plus-syncthing.md)
 - [ADR 0002: Start With Barter Before Paid Marketplace](adr/0002-start-with-barter-before-paid-marketplace.md)
+- [ADR 0003: Docker Host Agent Architecture](adr/0003-docker-host-agent-architecture.md)
 
 ## How To Use These Docs
 
