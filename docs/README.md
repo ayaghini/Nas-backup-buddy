@@ -56,6 +56,7 @@ Start here when working on the project.
 ## Prompts
 
 - [Implement Client App Prompt](prompts/implement-client-app.md)
+- [Implement Docker Host Tab Prompt](prompts/implement-host-tab.md)
 - [Implement Peer Connection Redesign Prompt](prompts/implement-peer-connection-redesign.md)
 - [Project Next Steps Agent Prompt](prompts/project-next-steps.md)
 
