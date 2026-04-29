@@ -2874,6 +2874,565 @@ fn save_app_config(app: tauri::AppHandle, config: serde_json::Value) -> Result<(
     Ok(())
 }
 
+// ── Host-agent Docker commands ────────────────────────────────────────────────
+//
+// These commands drive the Docker Compose stack in apps/host-agent/.
+// They use explicit std::process::Command args — no shell interpolation.
+// Output is bounded and redacted before returning to the frontend.
+
+#[derive(Debug, Serialize)]
+pub struct HostPrereqResult {
+    pub docker_available: bool,
+    pub docker_version: Option<String>,
+    pub compose_available: bool,
+    pub compose_version: Option<String>,
+    pub compose_dir: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HostEnvValues {
+    #[serde(rename = "NASBB_API_PORT")]
+    pub nasbb_api_port: String,
+    #[serde(rename = "NASBB_API_TOKEN")]
+    pub nasbb_api_token: String,
+    #[serde(rename = "NASBB_SFTP_PORT")]
+    pub nasbb_sftp_port: String,
+    #[serde(rename = "NASBB_SFTP_BIND")]
+    pub nasbb_sftp_bind: String,
+    #[serde(rename = "TAILSCALE_ADDRESS")]
+    pub tailscale_address: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ComposeServiceStatus {
+    pub name: String,
+    pub state: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ComposeStatus {
+    pub services: Vec<ComposeServiceStatus>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ComposeLogs {
+    pub agent_logs: String,
+    pub sftp_logs: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VerifyResult {
+    pub output: String,
+    pub passed: bool,
+    pub error: Option<String>,
+}
+
+// Resolve the apps/host-agent directory.
+// Debug builds: use the compile-time CARGO_MANIFEST_DIR.
+// Release builds: look for host-agent/ next to the executable.
+fn resolve_host_agent_dir() -> Result<std::path::PathBuf, String> {
+    #[cfg(debug_assertions)]
+    {
+        // CARGO_MANIFEST_DIR = apps/client/src-tauri at compile time
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        // apps/client/src-tauri/../../.. = repo root
+        let candidate = manifest.join("../../..").join("apps/host-agent");
+        if let Ok(p) = std::fs::canonicalize(&candidate) {
+            if p.join("compose").join("docker-compose.yml").exists() {
+                return Ok(p);
+            }
+        }
+    }
+    // Release build: check next to the executable
+    if let Ok(exe) = std::env::current_exe() {
+        let candidate = exe
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("host-agent");
+        if candidate.join("compose").join("docker-compose.yml").exists() {
+            return Ok(candidate);
+        }
+    }
+    Err(
+        "Host stack files not found. In development ensure apps/host-agent/ exists in the \
+         repository. In packaged builds the host stack is not yet bundled — this is a \
+         known packaging gap."
+            .to_string(),
+    )
+}
+
+fn compose_file(host_agent_dir: &std::path::Path) -> std::path::PathBuf {
+    host_agent_dir.join("compose").join("docker-compose.yml")
+}
+
+fn env_file(host_agent_dir: &std::path::Path) -> std::path::PathBuf {
+    host_agent_dir.join("compose").join(".env")
+}
+
+fn env_example_file(host_agent_dir: &std::path::Path) -> std::path::PathBuf {
+    host_agent_dir.join("compose").join(".env.example")
+}
+
+// Redact token= and SSH key patterns from a log line.
+fn redact_compose_line(line: &str) -> String {
+    let s = line
+        .replace(|c: char| c == '\r', "");
+    // Redact Bearer token values (hex 32+ chars)
+    let s = regex_redact_token(&s);
+    // Redact SSH public key material
+    let s = redact_ssh_key(&s);
+    s
+}
+
+fn regex_redact_token(s: &str) -> String {
+    // Simple pattern: "Bearer " followed by non-whitespace
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find("Bearer ") {
+        out.push_str(&rest[..pos + 7]);
+        let after = &rest[pos + 7..];
+        let end = after.find(|c: char| c.is_whitespace() || c == '"').unwrap_or(after.len());
+        out.push_str("[REDACTED]");
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    // Also redact NASBB_API_TOKEN= style
+    out.replace("NASBB_API_TOKEN=", "NASBB_API_TOKEN=[REDACTED]")
+}
+
+fn redact_ssh_key(s: &str) -> String {
+    // SSH keys start with AAAA (base64 prefix for ed25519 / rsa)
+    if !s.contains("AAAA") {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find("AAAA") {
+        out.push_str(&rest[..pos]);
+        out.push_str("[REDACTED-KEY]");
+        let after = &rest[pos + 4..];
+        let end = after.find(|c: char| c.is_whitespace() || c == '"').unwrap_or(after.len());
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn bounded_output(raw: &[u8], max_lines: usize) -> String {
+    let s = String::from_utf8_lossy(raw);
+    let lines: Vec<&str> = s.lines().collect();
+    let start = if lines.len() > max_lines { lines.len() - max_lines } else { 0 };
+    lines[start..].iter().map(|l| redact_compose_line(l)).collect::<Vec<_>>().join("\n")
+}
+
+/// Check Docker and Docker Compose availability.
+#[tauri::command]
+fn host_agent_check_prereqs() -> HostPrereqResult {
+    let docker_out = std::process::Command::new("docker")
+        .arg("--version")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output();
+
+    let (docker_available, docker_version) = match docker_out {
+        Ok(o) if o.status.success() => {
+            let v = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            (true, Some(v))
+        }
+        _ => (false, None),
+    };
+
+    let compose_out = std::process::Command::new("docker")
+        .args(["compose", "version"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output();
+
+    let (compose_available, compose_version) = match compose_out {
+        Ok(o) if o.status.success() => {
+            let v = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            (true, Some(v))
+        }
+        _ => (false, None),
+    };
+
+    let (compose_dir, error) = match resolve_host_agent_dir() {
+        Ok(p) => (Some(p.join("compose").display().to_string()), None),
+        Err(e) => (None, Some(e)),
+    };
+
+    HostPrereqResult {
+        docker_available,
+        docker_version,
+        compose_available,
+        compose_version,
+        compose_dir,
+        error,
+    }
+}
+
+/// Read the compose .env file and return the five required fields.
+/// If .env does not exist, copies from .env.example and returns defaults.
+#[tauri::command]
+fn host_agent_read_env() -> Result<HostEnvValues, String> {
+    let dir = resolve_host_agent_dir()?;
+    let env_path = env_file(&dir);
+
+    // Create from example if missing
+    if !env_path.exists() {
+        let example = env_example_file(&dir);
+        if example.exists() {
+            std::fs::copy(&example, &env_path)
+                .map_err(|e| format!("Cannot create .env from example: {e}"))?;
+        }
+    }
+
+    let content = if env_path.exists() {
+        std::fs::read_to_string(&env_path)
+            .map_err(|e| format!("Cannot read .env: {e}"))?
+    } else {
+        String::new()
+    };
+
+    let mut map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() { continue; }
+        if let Some(eq) = trimmed.find('=') {
+            let key = trimmed[..eq].trim().to_string();
+            let val = trimmed[eq + 1..].trim().trim_matches('"').trim_matches('\'').to_string();
+            map.insert(key, val);
+        }
+    }
+
+    Ok(HostEnvValues {
+        nasbb_api_port: map.get("NASBB_API_PORT").cloned().unwrap_or_else(|| "7420".to_string()),
+        nasbb_api_token: map.get("NASBB_API_TOKEN").cloned().unwrap_or_default(),
+        nasbb_sftp_port: map.get("NASBB_SFTP_PORT").cloned().unwrap_or_else(|| "2222".to_string()),
+        nasbb_sftp_bind: map.get("NASBB_SFTP_BIND").cloned().unwrap_or_else(|| "127.0.0.1".to_string()),
+        tailscale_address: map.get("TAILSCALE_ADDRESS").cloned().unwrap_or_default(),
+    })
+}
+
+/// Write specific env fields to the compose .env file.
+/// Preserves existing lines and comments. Never logs the token value.
+#[tauri::command]
+fn host_agent_write_env(values: std::collections::HashMap<String, String>) -> Result<(), String> {
+    // Validate: disallow writing tokens via command (must come from frontend only)
+    // but we accept them here since they're user-generated — we just never log them.
+    let dir = resolve_host_agent_dir()?;
+    let env_path = env_file(&dir);
+
+    // Seed from example if missing
+    if !env_path.exists() {
+        let example = env_example_file(&dir);
+        if example.exists() {
+            std::fs::copy(&example, &env_path)
+                .map_err(|e| format!("Cannot create .env: {e}"))?;
+        }
+    }
+
+    let existing = if env_path.exists() {
+        std::fs::read_to_string(&env_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let allowed_keys = ["NASBB_API_PORT", "NASBB_API_TOKEN", "NASBB_SFTP_PORT",
+                        "NASBB_SFTP_BIND", "TAILSCALE_ADDRESS"];
+    let mut written_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut new_lines: Vec<String> = Vec::new();
+
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            new_lines.push(line.to_string());
+            continue;
+        }
+        if let Some(eq) = trimmed.find('=') {
+            let key = trimmed[..eq].trim();
+            if allowed_keys.contains(&key) {
+                if let Some(new_val) = values.get(key) {
+                    // Suppress writing empty-placeholder commented-out keys
+                    // by writing key=value (no comment)
+                    new_lines.push(format!("{}={}", key, new_val));
+                    written_keys.insert(key.to_string());
+                    continue;
+                }
+            }
+        }
+        new_lines.push(line.to_string());
+    }
+
+    // Append any keys not already in the file
+    for key in &allowed_keys {
+        if !written_keys.contains(*key) {
+            if let Some(val) = values.get(*key) {
+                new_lines.push(format!("{}={}", key, val));
+            }
+        }
+    }
+
+    let content = new_lines.join("\n") + "\n";
+    std::fs::write(&env_path, content)
+        .map_err(|e| format!("Cannot write .env: {e}"))?;
+    Ok(())
+}
+
+fn run_compose(host_agent_dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+    let compose = compose_file(host_agent_dir);
+    let mut cmd = std::process::Command::new("docker");
+    cmd.arg("compose").arg("-f").arg(&compose);
+    for a in args { cmd.arg(a); }
+    let out = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("docker compose failed to start: {e}"))?;
+    let stdout = bounded_output(&out.stdout, 200);
+    let stderr = bounded_output(&out.stderr, 200);
+    if !out.status.success() {
+        let combined = format!("{}\n{}", stdout, stderr).trim().to_string();
+        return Err(combined);
+    }
+    Ok(format!("{}\n{}", stdout, stderr).trim().to_string())
+}
+
+/// Start the Docker Compose stack (docker compose up -d).
+#[tauri::command]
+fn host_agent_compose_up() -> Result<String, String> {
+    let dir = resolve_host_agent_dir()?;
+    run_compose(&dir, &["up", "-d"])
+}
+
+/// Stop the Docker Compose stack (docker compose down).
+#[tauri::command]
+fn host_agent_compose_down() -> Result<String, String> {
+    let dir = resolve_host_agent_dir()?;
+    run_compose(&dir, &["down"])
+}
+
+/// Restart the Docker Compose stack.
+#[tauri::command]
+fn host_agent_compose_restart() -> Result<String, String> {
+    let dir = resolve_host_agent_dir()?;
+    run_compose(&dir, &["restart"])
+}
+
+/// Fetch recent logs from both containers with redaction.
+#[tauri::command]
+fn host_agent_compose_logs() -> Result<ComposeLogs, String> {
+    let dir = resolve_host_agent_dir()?;
+    let compose = compose_file(&dir);
+
+    let agent_out = std::process::Command::new("docker")
+        .args(["compose", "-f"])
+        .arg(&compose)
+        .args(["logs", "--tail", "120", "nasbb-agent"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+
+    let sftp_out = std::process::Command::new("docker")
+        .args(["compose", "-f"])
+        .arg(&compose)
+        .args(["logs", "--tail", "120", "nasbb-sftp"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+
+    let (agent_logs, sftp_logs, error) = match (agent_out, sftp_out) {
+        (Ok(a), Ok(s)) => {
+            let al = bounded_output(&a.stdout, 120) + &bounded_output(&a.stderr, 120);
+            let sl = bounded_output(&s.stdout, 120) + &bounded_output(&s.stderr, 120);
+            (al.trim().to_string(), sl.trim().to_string(), None)
+        }
+        (Err(e), _) | (_, Err(e)) => {
+            (String::new(), String::new(), Some(format!("docker logs failed: {e}")))
+        }
+    };
+
+    Ok(ComposeLogs { agent_logs, sftp_logs, error })
+}
+
+/// Get the running status of compose services.
+#[tauri::command]
+fn host_agent_compose_status() -> Result<ComposeStatus, String> {
+    let dir = resolve_host_agent_dir()?;
+    let compose = compose_file(&dir);
+
+    let out = std::process::Command::new("docker")
+        .args(["compose", "-f"])
+        .arg(&compose)
+        .args(["ps", "--format", "json"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+
+    match out {
+        Err(e) => Ok(ComposeStatus {
+            services: vec![],
+            error: Some(format!("docker compose ps failed: {e}")),
+        }),
+        Ok(o) => {
+            let raw = String::from_utf8_lossy(&o.stdout);
+            let mut services = Vec::new();
+            for line in raw.lines() {
+                let line = line.trim();
+                if line.is_empty() { continue; }
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                    let name = v["Name"].as_str()
+                        .or_else(|| v["Service"].as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let state = v["State"].as_str().unwrap_or("unknown").to_string();
+                    let status = v["Status"].as_str().unwrap_or("").to_string();
+                    services.push(ComposeServiceStatus { name, state, status });
+                }
+            }
+            Ok(ComposeStatus { services, error: None })
+        }
+    }
+}
+
+/// Read the API token from the container log banner (fallback only).
+/// The banner pattern is: NASBB_API_TOKEN=<token>
+/// The token is never written to app logs.
+#[tauri::command]
+fn host_agent_get_token_hint() -> Result<Option<String>, String> {
+    let dir = resolve_host_agent_dir()?;
+    let compose = compose_file(&dir);
+
+    let out = std::process::Command::new("docker")
+        .args(["compose", "-f"])
+        .arg(&compose)
+        .args(["logs", "--tail", "200", "nasbb-agent"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("docker logs failed: {e}"))?;
+
+    let combined = String::from_utf8_lossy(&out.stdout).to_string()
+        + &String::from_utf8_lossy(&out.stderr);
+
+    for line in combined.lines() {
+        // Look for the agent's startup token banner
+        if let Some(pos) = line.find("NASBB_API_TOKEN=") {
+            let after = &line[pos + 16..];
+            let token = after.split_whitespace().next().unwrap_or("").trim().to_string();
+            if !token.is_empty() {
+                return Ok(Some(token));
+            }
+        }
+        // Also accept "Generated API token:" banner format
+        if line.contains("Generated API token:") || line.contains("api_token:") {
+            if let Some(tok_start) = line.rfind(':') {
+                let token = line[tok_start + 1..].trim().to_string();
+                if token.len() >= 16 {
+                    return Ok(Some(token));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Run the end-to-end verification script against the running stack.
+/// Output is bounded and redacted before returning to the UI.
+#[tauri::command]
+fn host_agent_run_verify() -> Result<VerifyResult, String> {
+    let dir = resolve_host_agent_dir()?;
+    let script = dir.join("tests").join("scripts").join("verify.sh");
+    if !script.exists() {
+        return Err(format!(
+            "Verification script not found at {}",
+            script.display()
+        ));
+    }
+    let out = std::process::Command::new("bash")
+        .arg(&script)
+        .current_dir(&dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("Failed to run verify.sh: {e}"))?;
+
+    let raw_out = String::from_utf8_lossy(&out.stdout).to_string()
+        + &String::from_utf8_lossy(&out.stderr);
+    let output = raw_out
+        .lines()
+        .map(|l| redact_compose_line(l))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let passed = out.status.success();
+    Ok(VerifyResult { output, passed, error: None })
+}
+
+/// Proxy an HTTP request to the local host-agent API via Rust (ureq).
+///
+/// The frontend cannot reliably fetch http://127.0.0.1 from a tauri:// secure
+/// context on WebKitGTK (Linux) — the engine blocks it as mixed content.
+/// This command is the authorised bypass: it runs inside the Rust process, not
+/// the webview, so there are no mixed-content or CORS restrictions.
+///
+/// Only http://127.0.0.1:7420 is reachable via this command — the base URL is
+/// hard-coded and the caller only supplies a relative path.
+#[derive(Debug, Deserialize)]
+struct HostAgentHttpArgs {
+    method: String,
+    path: String,
+    token: Option<String>,
+    body: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct HostAgentHttpResponse {
+    status: u16,
+    body: String,
+    ok: bool,
+}
+
+#[tauri::command]
+fn host_agent_http(args: HostAgentHttpArgs) -> Result<HostAgentHttpResponse, String> {
+    let base = "http://127.0.0.1:7420/api/v1";
+    let url = format!("{}{}", base, args.path);
+
+    let req = ureq::request(&args.method, &url);
+    let req = if let Some(ref token) = args.token {
+        req.set("Authorization", &format!("Bearer {}", token))
+    } else {
+        req
+    };
+    let req = if args.body.is_some() {
+        req.set("Content-Type", "application/json")
+    } else {
+        req
+    };
+
+    let result = if let Some(body) = args.body {
+        req.send_string(&body)
+    } else {
+        req.call()
+    };
+
+    match result {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.into_string().unwrap_or_default();
+            Ok(HostAgentHttpResponse { status, body, ok: status < 400 })
+        }
+        Err(ureq::Error::Status(status, resp)) => {
+            let body = resp.into_string().unwrap_or_default();
+            Ok(HostAgentHttpResponse { status, body, ok: false })
+        }
+        Err(e) => Err(format!("network_error: {e}")),
+    }
+}
+
 /// Load `{app_data}/app-config.json` and return it as a JSON value.
 /// Returns an empty object if the file does not exist yet.
 #[tauri::command]
@@ -2979,6 +3538,18 @@ pub fn run() {
             parse_owner_bundle,
             generate_owner_ssh_key,
             verify_sftp_target,
+            // Host-agent Docker commands
+            host_agent_check_prereqs,
+            host_agent_read_env,
+            host_agent_write_env,
+            host_agent_compose_up,
+            host_agent_compose_down,
+            host_agent_compose_restart,
+            host_agent_compose_logs,
+            host_agent_compose_status,
+            host_agent_get_token_hint,
+            host_agent_run_verify,
+            host_agent_http,
         ])
         .build(tauri::generate_context!())
         .expect("error while building NAS Backup Buddy")

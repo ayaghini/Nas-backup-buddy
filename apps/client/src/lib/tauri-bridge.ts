@@ -5,6 +5,14 @@
 // UI stays usable in browser preview and development without a running backend.
 
 import type {
+  HostPrereqResult,
+  HostEnvValues,
+  ComposeStatus,
+  ComposeLogs,
+  VerifyResult,
+} from './host-agent-types';
+
+import type {
   ClientSetupState,
   CommandPlanSummary,
   CompatibilityEntry,
@@ -885,4 +893,74 @@ export async function verifySftpTarget(
       quota_warning: false,
     };
   }
+}
+
+// ── Host-agent Docker commands ────────────────────────────────────────────────
+
+export async function hostAgentCheckPrereqs(): Promise<HostPrereqResult> {
+  try {
+    return await invoke<HostPrereqResult>('host_agent_check_prereqs');
+  } catch {
+    return {
+      docker_available: false,
+      docker_version: null,
+      compose_available: false,
+      compose_version: null,
+      compose_dir: null,
+      error: 'Not available in browser mode.',
+    };
+  }
+}
+
+export async function hostAgentReadEnv(): Promise<Partial<HostEnvValues>> {
+  try {
+    return await invoke<Partial<HostEnvValues>>('host_agent_read_env');
+  } catch {
+    return {};
+  }
+}
+
+export async function hostAgentWriteEnv(values: Partial<HostEnvValues>): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>('host_agent_write_env', { values });
+}
+
+export async function hostAgentComposeUp(): Promise<string> {
+  return invoke<string>('host_agent_compose_up');
+}
+
+export async function hostAgentComposeDown(): Promise<string> {
+  return invoke<string>('host_agent_compose_down');
+}
+
+export async function hostAgentComposeRestart(): Promise<string> {
+  return invoke<string>('host_agent_compose_restart');
+}
+
+export async function hostAgentComposeLogs(): Promise<ComposeLogs> {
+  try {
+    return await invoke<ComposeLogs>('host_agent_compose_logs');
+  } catch {
+    return { agent_logs: '', sftp_logs: '', error: 'Not available in browser mode.' };
+  }
+}
+
+export async function hostAgentComposeStatus(): Promise<ComposeStatus> {
+  try {
+    return await invoke<ComposeStatus>('host_agent_compose_status');
+  } catch {
+    return { services: [], error: 'Not available in browser mode.' };
+  }
+}
+
+export async function hostAgentGetTokenHint(): Promise<string | null> {
+  try {
+    return await invoke<string | null>('host_agent_get_token_hint');
+  } catch {
+    return null;
+  }
+}
+
+export async function hostAgentRunVerify(): Promise<VerifyResult> {
+  return invoke<VerifyResult>('host_agent_run_verify');
 }

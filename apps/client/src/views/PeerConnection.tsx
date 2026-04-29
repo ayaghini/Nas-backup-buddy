@@ -900,7 +900,7 @@ export function PeerConnection() {
                       <button
                         onClick={() => setExpandedAllocCommands(prev => {
                           const next = new Set(prev);
-                          next.has(alloc.id) ? next.delete(alloc.id) : next.add(alloc.id);
+                          if (next.has(alloc.id)) { next.delete(alloc.id); } else { next.add(alloc.id); }
                           return next;
                         })}
                         className="rounded bg-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-600"

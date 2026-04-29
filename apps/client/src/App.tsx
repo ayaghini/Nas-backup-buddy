@@ -9,6 +9,7 @@ import {
   KeyRound,
   Network,
   RotateCcw,
+  Server,
   Settings,
   Shield,
   Sliders,
@@ -26,11 +27,13 @@ import { SettingsView }        from './views/Settings';
 import { About }               from './views/About';
 import { TestLab }             from './views/TestLab';
 import { RecoveryKey }         from './views/RecoveryKey';
+import { Host }                from './views/Host';
 
 const NAV = [
   { to: '/',             icon: <Activity size={16} />,     label: 'Dashboard'          },
   { to: '/setup',        icon: <Wand2 size={16} />,        label: 'Setup Wizard'       },
   { to: '/backup',       icon: <HardDrive size={16} />,    label: 'Backup Plan'        },
+  { to: '/host',         icon: <Server size={16} />,       label: 'Host'               },
   { to: '/peer-connection', icon: <Network size={16} />,   label: 'Peer Connection'    },
   { to: '/drills',       icon: <RotateCcw size={16} />,    label: 'Restore Drill'      },
   { to: '/health',       icon: <Shield size={16} />,       label: 'Health Checks'      },
@@ -88,10 +91,11 @@ export function App() {
             <Route path="/"             element={<Dashboard />} />
             <Route path="/setup"        element={<SetupWizard />} />
             <Route path="/backup"       element={<BackupPlan />} />
+            <Route path="/host"         element={<Host />} />
+            <Route path="/host-setup"   element={<Navigate to="/host" replace />} />
             <Route path="/peer-connection" element={<PeerConnection />} />
             <Route path="/peer-storage" element={<Navigate to="/peer-connection?section=owner" replace />} />
             <Route path="/overlay"      element={<Navigate to="/peer-connection?section=network" replace />} />
-            <Route path="/host-setup"   element={<Navigate to="/peer-connection?section=host" replace />} />
             <Route path="/syncthing"    element={<Navigate to="/peer-connection?section=advanced" replace />} />
             <Route path="/drills"       element={<RestoreDrill />} />
             <Route path="/health"       element={<HealthChecks />} />
