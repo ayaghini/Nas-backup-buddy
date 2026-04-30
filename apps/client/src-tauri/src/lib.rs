@@ -1384,7 +1384,9 @@ pub struct SftpRepositoryInitResult {
 #[tauri::command]
 fn probe_remote_target(host: String, port: u16) -> RemoteTargetProbeResponse {
     use nasbb_core::remote_target::{probe_tcp_reachability, ProbeMethod};
+    eprintln!("[probe_remote_target] host={:?} port={}", host, port);
     let result = probe_tcp_reachability(&host, port);
+    eprintln!("[probe_remote_target] status={:?} msg={:?}", result.status, result.message);
     let status = match &result.status {
         nasbb_core::remote_target::RemoteTargetStatus::NotConfigured => "not_configured",
         nasbb_core::remote_target::RemoteTargetStatus::Reachable => "tcp_port_reachable",
