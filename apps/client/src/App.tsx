@@ -19,7 +19,7 @@ import {
 import { Dashboard }           from './views/Dashboard';
 import { SetupWizard }         from './views/SetupWizard';
 import { BackupPlan }          from './views/BackupPlan';
-import { PeerConnection }      from './views/PeerConnection';
+import { Peer }               from './views/Peer';
 import { RestoreDrill }        from './views/RestoreDrill';
 import { HealthChecks }        from './views/HealthChecks';
 import { Logs }                from './views/Logs';
@@ -34,7 +34,7 @@ const NAV = [
   { to: '/setup',        icon: <Wand2 size={16} />,        label: 'Setup Wizard'       },
   { to: '/backup',       icon: <HardDrive size={16} />,    label: 'Backup Plan'        },
   { to: '/host',         icon: <Server size={16} />,       label: 'Host'               },
-  { to: '/peer-connection', icon: <Network size={16} />,   label: 'Peer Connection'    },
+  { to: '/peer',         icon: <Network size={16} />,       label: 'Peer'               },
   { to: '/drills',       icon: <RotateCcw size={16} />,    label: 'Restore Drill'      },
   { to: '/health',       icon: <Shield size={16} />,       label: 'Health Checks'      },
   { to: '/recovery',     icon: <KeyRound size={16} />,     label: 'Recovery Key'       },
@@ -93,9 +93,10 @@ export function App() {
             <Route path="/backup"       element={<BackupPlan />} />
             <Route path="/host"         element={<Host />} />
             <Route path="/host-setup"   element={<Navigate to="/host" replace />} />
-            <Route path="/peer-connection" element={<PeerConnection />} />
-            <Route path="/peer-storage" element={<Navigate to="/peer-connection?section=owner" replace />} />
-            <Route path="/overlay"      element={<Navigate to="/peer-connection?section=network" replace />} />
+            <Route path="/peer"         element={<Peer />} />
+            <Route path="/peer-connection" element={<Navigate to="/peer" replace />} />
+            <Route path="/peer-storage" element={<Navigate to="/peer" replace />} />
+            <Route path="/overlay"      element={<Navigate to="/peer" replace />} />
             <Route path="/syncthing"    element={<Navigate to="/peer-connection?section=advanced" replace />} />
             <Route path="/drills"       element={<RestoreDrill />} />
             <Route path="/health"       element={<HealthChecks />} />

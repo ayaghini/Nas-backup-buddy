@@ -2699,6 +2699,35 @@ pub struct OwnerSshKeyResult {
     pub already_existed: bool,
 }
 
+/// Find the `ssh-keygen` binary.
+///
+/// On Windows, the OpenSSH Optional Feature installs `ssh-keygen.exe` under
+/// `System32\OpenSSH\` which may not be on PATH, and Git for Windows ships its
+/// own copy. Check known locations before falling back to a bare PATH lookup.
+fn find_ssh_keygen() -> std::ffi::OsString {
+    #[cfg(target_os = "windows")]
+    {
+        let candidates = [
+            r"C:\Windows\System32\OpenSSH\ssh-keygen.exe",
+            r"C:\Program Files\Git\usr\bin\ssh-keygen.exe",
+            r"C:\Program Files (x86)\Git\usr\bin\ssh-keygen.exe",
+        ];
+        for candidate in &candidates {
+            if std::path::Path::new(candidate).exists() {
+                return std::ffi::OsString::from(*candidate);
+            }
+        }
+        // Also try %ProgramFiles% env var for non-standard Git installs
+        if let Ok(pf) = std::env::var("ProgramFiles") {
+            let git_path = format!(r"{}\Git\usr\bin\ssh-keygen.exe", pf);
+            if std::path::Path::new(&git_path).exists() {
+                return std::ffi::OsString::from(git_path);
+            }
+        }
+    }
+    "ssh-keygen".into()
+}
+
 fn safe_key_match_id(match_id: &str) -> Result<String, String> {
     let trimmed = match_id.trim();
     if trimmed.is_empty() {
@@ -2748,7 +2777,8 @@ fn generate_owner_ssh_key(
     let already_existed = key_path.exists() && pub_path.exists();
 
     if !already_existed {
-        let status = std::process::Command::new("ssh-keygen")
+        let ssh_keygen = find_ssh_keygen();
+        let status = std::process::Command::new(&ssh_keygen)
             .args([
                 "-t",
                 "ed25519",
@@ -2761,8 +2791,19 @@ fn generate_owner_ssh_key(
             .arg(&key_path)
             .status()
             .map_err(|_| {
-                "ssh-keygen was not found. Install OpenSSH or import an existing key manually."
-                    .to_string()
+                #[cfg(target_os = "windows")]
+                {
+                    "ssh-keygen was not found. Enable the OpenSSH optional feature: \
+                     Settings → System → Optional Features → Add: OpenSSH Client. \
+                     Alternatively, install Git for Windows which includes ssh-keygen."
+                        .to_string()
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    "ssh-keygen was not found. Install OpenSSH (openssh-client package) \
+                     or import an existing key manually."
+                        .to_string()
+                }
             })?;
         if !status.success() {
             return Err("ssh-keygen failed while creating the per-match key".to_string());
@@ -2780,7 +2821,7 @@ fn generate_owner_ssh_key(
         .trim()
         .to_string();
 
-    let fingerprint_out = std::process::Command::new("ssh-keygen")
+    let fingerprint_out = std::process::Command::new(find_ssh_keygen())
         .arg("-lf")
         .arg(&pub_path)
         .output()
@@ -3452,6 +3493,18 @@ fn load_app_config(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Parse failed: {e}"))
 }
 
+/// Read a UTF-8 text file at the given path.
+#[tauri::command]
+fn read_text_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("Cannot read file: {e}"))
+}
+
+/// Write UTF-8 text to the given path (creates or overwrites).
+#[tauri::command]
+fn write_text_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, content.as_bytes()).map_err(|e| format!("Cannot write file: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -3550,6 +3603,8 @@ pub fn run() {
             host_agent_get_token_hint,
             host_agent_run_verify,
             host_agent_http,
+            read_text_file,
+            write_text_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building NAS Backup Buddy")

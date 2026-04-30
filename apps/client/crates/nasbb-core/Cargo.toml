@@ -20,4 +20,10 @@ ssh2 = "0.9"
 # Base64 encoding for SHA-256 host-key fingerprints (OpenSSH standard format).
 base64 = "0.22"
 
+# On Windows, vendor OpenSSL so the binary does not require external DLLs.
+# The ssh2 crate's libssh2-sys dep links against openssl-sys; vendoring compiles
+# OpenSSL from source using MSVC/MinGW (no separate OpenSSL installation needed).
+[target.'cfg(target_os = "windows")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+
 [dev-dependencies]

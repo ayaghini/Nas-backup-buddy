@@ -964,3 +964,39 @@ export async function hostAgentGetTokenHint(): Promise<string | null> {
 export async function hostAgentRunVerify(): Promise<VerifyResult> {
   return invoke<VerifyResult>('host_agent_run_verify');
 }
+
+// ── Peer tab file helpers ─────────────────────────────────────────────────────
+
+/** Open a file-open dialog filtered to JSON files and return the chosen path, or null. */
+export async function pickJsonFile(): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  const selected = await open({
+    directory: false,
+    multiple: false,
+    title: 'Open Host Invite Bundle',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  return typeof selected === 'string' ? selected : null;
+}
+
+/** Read a UTF-8 text file at the given path. Throws on error. */
+export async function readTextFile(path: string): Promise<string> {
+  return invoke<string>('read_text_file', { path });
+}
+
+/** Write UTF-8 text to the given path (creates or overwrites). Throws on error. */
+export async function writeTextFile(path: string, content: string): Promise<void> {
+  return invoke<void>('write_text_file', { path, content });
+}
+
+/** Open a save-file dialog and return the chosen path, or null if cancelled. */
+export async function savePicker(defaultName: string): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { save } = await import('@tauri-apps/plugin-dialog');
+  const selected = await save({
+    defaultPath: defaultName,
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  return typeof selected === 'string' ? selected : null;
+}
