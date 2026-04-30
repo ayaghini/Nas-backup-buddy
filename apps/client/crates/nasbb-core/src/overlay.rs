@@ -1295,6 +1295,252 @@ pub fn headscale_setup_guide(server_url: Option<&str>) -> Vec<OverlayVerifyStep>
     ]
 }
 
+// ── Tailscale Funnel support ──────────────────────────────────────────────────
+
+const FUNNEL_TCP_PUBLIC_PORT: u16 = 443;
+
+/// Current Tailscale Funnel state for this machine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunnelStatus {
+    /// True if a TCP funnel rule is active on port 443.
+    pub enabled: bool,
+    /// The machine's MagicDNS hostname (e.g. `my-mac.tailnet.ts.net`).
+    pub public_hostname: Option<String>,
+    /// The local port being forwarded through the funnel.
+    pub local_port: Option<u16>,
+    /// The public port (always 443 for TCP funnel in this app).
+    pub public_port: u16,
+    /// Tailnet has not activated Funnel — user must visit activation_url.
+    pub needs_activation: bool,
+    /// URL to visit to activate Funnel for this tailnet.
+    pub activation_url: Option<String>,
+    pub message: String,
+}
+
+/// Result of enabling Tailscale Funnel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunnelEnableResult {
+    pub success: bool,
+    pub needs_activation: bool,
+    pub activation_url: Option<String>,
+    pub public_hostname: Option<String>,
+    pub message: String,
+}
+
+/// Result of disabling Tailscale Funnel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunnelDisableResult {
+    pub success: bool,
+    pub message: String,
+}
+
+/// Query the current Tailscale Funnel status by running `tailscale funnel status`.
+pub fn get_funnel_status() -> FunnelStatus {
+    let bin = match find_tailscale_binary() {
+        Some(b) => b,
+        None => return FunnelStatus {
+            enabled: false, public_hostname: None, local_port: None,
+            public_port: FUNNEL_TCP_PUBLIC_PORT, needs_activation: false,
+            activation_url: None,
+            message: "Tailscale CLI not found — install Tailscale first.".to_string(),
+        },
+    };
+    match std::process::Command::new(&bin)
+        .args(["funnel", "status"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+    {
+        Err(_) => FunnelStatus {
+            enabled: false, public_hostname: None, local_port: None,
+            public_port: FUNNEL_TCP_PUBLIC_PORT, needs_activation: false,
+            activation_url: None,
+            message: "Failed to run tailscale funnel status.".to_string(),
+        },
+        Ok(out) => {
+            let text = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            parse_funnel_status_output(&text)
+        }
+    }
+}
+
+/// Enable Tailscale Funnel for TCP on port 443, forwarding to `local_port`.
+///
+/// Runs: `tailscale funnel --bg --tcp=443 localhost:<local_port>`
+///
+/// Must only be called from an explicit, confirmed user action.
+/// No auth keys, ACLs, or other mutation flags are passed.
+pub fn enable_funnel(local_port: u16) -> FunnelEnableResult {
+    let bin = match find_tailscale_binary() {
+        Some(b) => b,
+        None => return FunnelEnableResult {
+            success: false, needs_activation: false, activation_url: None,
+            public_hostname: None,
+            message: "Tailscale CLI not found — install Tailscale first.".to_string(),
+        },
+    };
+    let local_target = format!("localhost:{local_port}");
+    match std::process::Command::new(&bin)
+        .args(["funnel", "--bg", "--tcp=443", &local_target])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+    {
+        Err(_) => FunnelEnableResult {
+            success: false, needs_activation: false, activation_url: None,
+            public_hostname: None,
+            message: "Failed to run tailscale funnel command.".to_string(),
+        },
+        Ok(out) => {
+            let text = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            parse_funnel_enable_output(&text, out.status.success())
+        }
+    }
+}
+
+/// Disable Tailscale Funnel by running `tailscale funnel reset`.
+///
+/// Must only be called from an explicit, confirmed user action.
+pub fn disable_funnel() -> FunnelDisableResult {
+    let bin = match find_tailscale_binary() {
+        Some(b) => b,
+        None => return FunnelDisableResult {
+            success: false,
+            message: "Tailscale CLI not found — install Tailscale first.".to_string(),
+        },
+    };
+    match std::process::Command::new(&bin)
+        .args(["funnel", "reset"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+    {
+        Err(_) => FunnelDisableResult {
+            success: false,
+            message: "Failed to run tailscale funnel reset.".to_string(),
+        },
+        Ok(out) => {
+            if out.status.success() {
+                FunnelDisableResult {
+                    success: true,
+                    message: "Funnel disabled — SFTP is no longer publicly accessible via Funnel.".to_string(),
+                }
+            } else {
+                FunnelDisableResult {
+                    success: false,
+                    message: "tailscale funnel reset failed — check Tailscale status.".to_string(),
+                }
+            }
+        }
+    }
+}
+
+/// Parse output from `tailscale funnel status`. Exported for unit tests.
+pub fn parse_funnel_status_output(text: &str) -> FunnelStatus {
+    let needs_activation = funnel_text_needs_activation(text);
+    if needs_activation {
+        return FunnelStatus {
+            enabled: false, public_hostname: None, local_port: None,
+            public_port: FUNNEL_TCP_PUBLIC_PORT, needs_activation: true,
+            activation_url: extract_funnel_activation_url(text),
+            message: "Tailscale Funnel is not enabled for your tailnet. Visit the activation URL to enable it.".to_string(),
+        };
+    }
+    let local_port = extract_tcp_local_port(text);
+    let public_hostname = extract_funnel_hostname(text);
+    let enabled = local_port.is_some();
+    FunnelStatus {
+        enabled,
+        public_hostname,
+        local_port,
+        public_port: FUNNEL_TCP_PUBLIC_PORT,
+        needs_activation: false,
+        activation_url: None,
+        message: if enabled {
+            format!("Funnel active: TCP port {} is publicly accessible.", FUNNEL_TCP_PUBLIC_PORT)
+        } else {
+            "No Funnel configured.".to_string()
+        },
+    }
+}
+
+/// Parse output from `tailscale funnel --bg --tcp=443 ...`. Exported for unit tests.
+pub fn parse_funnel_enable_output(text: &str, exit_ok: bool) -> FunnelEnableResult {
+    let needs_activation = funnel_text_needs_activation(text);
+    if needs_activation {
+        return FunnelEnableResult {
+            success: false, needs_activation: true,
+            activation_url: extract_funnel_activation_url(text),
+            public_hostname: None,
+            message: "Tailscale Funnel is not enabled for your tailnet. Visit the activation URL to enable it, then try again.".to_string(),
+        };
+    }
+    if !exit_ok {
+        return FunnelEnableResult {
+            success: false, needs_activation: false, activation_url: None,
+            public_hostname: None,
+            message: "tailscale funnel command failed — check that Tailscale is running and you are signed in.".to_string(),
+        };
+    }
+    FunnelEnableResult {
+        success: true, needs_activation: false, activation_url: None,
+        public_hostname: extract_funnel_hostname(text),
+        message: format!(
+            "Funnel enabled — TCP port {} is now publicly accessible. \
+             Set NASBB_SFTP_PUBLIC_PORT={} in your host env to embed this port in invite bundles.",
+            FUNNEL_TCP_PUBLIC_PORT, FUNNEL_TCP_PUBLIC_PORT
+        ),
+    }
+}
+
+fn funnel_text_needs_activation(text: &str) -> bool {
+    text.contains("funnel is disabled")
+        || text.contains("Funnel not enabled")
+        || text.contains("funnel not enabled")
+        || text.contains("Funnel not available")
+}
+
+fn extract_funnel_activation_url(text: &str) -> Option<String> {
+    text.lines()
+        .find(|l| l.trim().starts_with("https://login.tailscale.com"))
+        .map(|l| l.trim().to_string())
+}
+
+fn extract_tcp_local_port(text: &str) -> Option<u16> {
+    for line in text.lines() {
+        let t = line.trim();
+        if t.contains("tcp://localhost:") || t.contains("tcp://127.0.0.1:") {
+            let colon_pos = t.rfind(':')?;
+            let port_str = t[colon_pos + 1..].split_whitespace().next()?;
+            return port_str.parse::<u16>().ok();
+        }
+    }
+    None
+}
+
+fn extract_funnel_hostname(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let t = line.trim();
+        // Match "my-machine.tailnet.ts.net:443" or "my-machine.tailnet.ts.net:443 (tailnet+internet)"
+        if (t.ends_with(".ts.net:443") || t.contains(".ts.net:443 ")) && !t.starts_with('#') {
+            return t.splitn(2, ':').next().map(|s| s.to_string());
+        }
+        // Match plain hostname in "Available on the internet:" block
+        if t.ends_with(".ts.net") && !t.starts_with('#') && !t.starts_with('|') && !t.contains(' ') {
+            return Some(t.to_string());
+        }
+    }
+    None
+}
+
 // ── Compatibility matrix ──────────────────────────────────────────────────────
 
 /// A single row in the overlay compatibility matrix.

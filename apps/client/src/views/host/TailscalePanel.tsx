@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   AlertTriangle,
+  ExternalLink,
   Loader2,
   RefreshCw,
   Shield,
@@ -14,8 +15,11 @@ import {
   hostAgentReadEnv,
   hostAgentWriteEnv,
   hostAgentComposeRestart,
+  tailscaleFunnelStatus,
+  tailscaleFunnelEnable,
+  tailscaleFunnelDisable,
 } from '../../lib/tauri-bridge';
-import type { TailscaleDetail } from '../../lib/types';
+import type { TailscaleDetail, FunnelStatus } from '../../lib/types';
 import { errorMessage, getOverlayStatus, getSftpStatus, refreshOverlayStatus } from '../../lib/host-agent-api';
 
 interface Props {
@@ -39,6 +43,7 @@ function ReachabilityBadge({ cls }: { cls: ReturnType<typeof classifyReachabilit
 
 export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
   const [tsDetail, setTsDetail] = useState<TailscaleDetail | null>(null);
+  const [funnelStatus, setFunnelStatus] = useState<FunnelStatus | null>(null);
   const [overlayStatus, setOverlayStatus] = useState<{ hostAddress: string; sftpPort: number } | null>(null);
   const [sftpStatus, setSftpStatus] = useState<{ bindAddress: string; running: boolean; publicExposureWarning: boolean } | null>(null);
   const [localEnv, setLocalEnv] = useState<Partial<HostEnvValues>>(env);
@@ -54,11 +59,13 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
     setBusy('refresh');
     setError(null);
     try {
-      const [ts, freshEnv] = await Promise.all([
+      const [ts, freshEnv, funnel] = await Promise.all([
         getTailscaleDetail(),
         hostAgentReadEnv(),
+        tailscaleFunnelStatus(),
       ]);
       setTsDetail(ts);
+      setFunnelStatus(funnel);
       setLocalEnv(freshEnv);
       onEnvChange(freshEnv);
 
@@ -82,6 +89,49 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
   useEffect(() => {
     void refreshAll();
   }, [refreshAll]);
+
+  async function doEnableFunnel() {
+    const localPort = parseInt(localEnv.NASBB_SFTP_PORT ?? '2222', 10) || 2222;
+    setBusy('funnel-enable');
+    setError(null);
+    try {
+      const result = await tailscaleFunnelEnable(localPort);
+      if (result.success) {
+        // Auto-configure env: public port 443, advertised address = MagicDNS hostname
+        const updates: Partial<HostEnvValues> = { NASBB_SFTP_PUBLIC_PORT: '443' };
+        if (result.public_hostname) updates.TAILSCALE_ADDRESS = result.public_hostname;
+        setLocalEnv(v => ({ ...v, ...updates }));
+        setRestartNeeded(true);
+      }
+      const fs = await tailscaleFunnelStatus();
+      setFunnelStatus(fs);
+      if (!result.success) setError(result.message);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function doDisableFunnel() {
+    setBusy('funnel-disable');
+    setError(null);
+    try {
+      const result = await tailscaleFunnelDisable();
+      if (result.success) {
+        // Remove the public port override so invites revert to the internal SFTP port
+        setLocalEnv(v => { const n = { ...v }; delete n.NASBB_SFTP_PUBLIC_PORT; return n; });
+        setRestartNeeded(true);
+      }
+      const fs = await tailscaleFunnelStatus();
+      setFunnelStatus(fs);
+      if (!result.success) setError(result.message);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   function applyTailscaleIp(ip: string) {
     // MagicDNS must NOT go to NASBB_SFTP_BIND — it must be a bindable IP
@@ -204,6 +254,79 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
         )}
       </div>
 
+      {/* Tailscale Funnel */}
+      <div className="bg-slate-900 rounded border border-slate-800 p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-medium text-slate-300">Tailscale Funnel</div>
+          <div className="text-xs text-slate-500">Cross-account internet access</div>
+        </div>
+        <div className="text-xs text-slate-400">
+          Funnel makes your SFTP server publicly reachable from the internet on port 443,
+          so owners on a different Tailscale account can connect without device sharing.
+        </div>
+        {appMode === 'browser' && (
+          <div className="text-xs text-amber-400">Funnel control not available in browser mode.</div>
+        )}
+        {funnelStatus && appMode === 'tauri' && (
+          <div className="space-y-2">
+            {funnelStatus.needs_activation && (
+              <div className="px-2 py-2 rounded bg-amber-900/30 border border-amber-700/40 text-xs text-amber-300 space-y-1">
+                <div className="flex items-center gap-1.5 font-medium">
+                  <AlertTriangle size={11} /> Funnel not activated for this tailnet
+                </div>
+                <div>Visit your Tailscale admin console to enable Funnel, then try again.</div>
+                {funnelStatus.activation_url && (
+                  <a
+                    href={funnelStatus.activation_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 text-sky-400 hover:text-sky-300 underline"
+                  >
+                    <ExternalLink size={10} /> Activate Funnel
+                  </a>
+                )}
+              </div>
+            )}
+            {funnelStatus.enabled ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5 text-xs text-emerald-400">
+                  <Wifi size={11} /> Funnel active — port 443 → localhost:{funnelStatus.local_port ?? '?'}
+                </div>
+                {funnelStatus.public_hostname && (
+                  <div className="text-xs text-slate-400">
+                    Public host: <span className="font-mono text-slate-300">{funnelStatus.public_hostname}:443</span>
+                    <span className="text-slate-500 ml-1">(embed in invites)</span>
+                  </div>
+                )}
+                <button
+                  onClick={doDisableFunnel}
+                  disabled={!!busy}
+                  className="px-3 py-1.5 rounded bg-red-800/60 hover:bg-red-700/60 text-xs text-red-200 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {busy === 'funnel-disable' ? <Loader2 size={11} className="animate-spin" /> : null}
+                  Disable Funnel
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <div className="text-xs text-slate-500">{funnelStatus.message}</div>
+                {!funnelStatus.needs_activation && (
+                  <button
+                    onClick={doEnableFunnel}
+                    disabled={!!busy || !tsDetail?.connected}
+                    className="px-3 py-1.5 rounded bg-sky-700 hover:bg-sky-600 text-xs text-white disabled:opacity-50 flex items-center gap-1.5"
+                    title={!tsDetail?.connected ? 'Connect Tailscale first' : undefined}
+                  >
+                    {busy === 'funnel-enable' ? <Loader2 size={11} className="animate-spin" /> : null}
+                    Enable Funnel (TCP 443)
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Env editor */}
       <div className="bg-slate-900 rounded border border-slate-800 p-3 space-y-2">
         <div className="text-xs font-medium text-slate-300">Network Configuration</div>
@@ -228,6 +351,18 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
               value={localEnv.TAILSCALE_ADDRESS ?? ''}
               onChange={e => { setLocalEnv(v => ({ ...v, TAILSCALE_ADDRESS: e.target.value })); setRestartNeeded(true); }}
               placeholder="e.g. 100.64.0.1"
+              className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 font-mono"
+            />
+          </label>
+          <label className="block">
+            <div className="text-xs text-slate-400 mb-0.5">
+              NASBB_SFTP_PUBLIC_PORT <span className="text-slate-600">(port in invite bundles; leave blank to use SFTP port; set to 443 when Funnel is active)</span>
+            </div>
+            <input
+              type="text"
+              value={localEnv.NASBB_SFTP_PUBLIC_PORT ?? ''}
+              onChange={e => { setLocalEnv(v => ({ ...v, NASBB_SFTP_PUBLIC_PORT: e.target.value })); setRestartNeeded(true); }}
+              placeholder="443 (when Funnel active), blank = same as SFTP port"
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 font-mono"
             />
           </label>

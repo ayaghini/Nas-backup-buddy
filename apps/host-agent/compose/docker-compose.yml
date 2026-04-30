@@ -18,6 +18,7 @@ services:
       NASBB_SFTP_PORT: "${NASBB_SFTP_PORT:-2222}"
       NASBB_SFTP_HOST: "nasbb-sftp"
       TAILSCALE_ADDRESS: "${TAILSCALE_ADDRESS:-}"
+      NASBB_SFTP_PUBLIC_PORT: "${NASBB_SFTP_PUBLIC_PORT:-}"
     volumes:
       - nasbb-config:/config
       - nasbb-state:/state

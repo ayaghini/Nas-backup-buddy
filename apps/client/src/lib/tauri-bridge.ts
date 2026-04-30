@@ -44,6 +44,9 @@ import type {
   TailscaleConnectResult,
   TailscaleDetail,
   TailscalePingResult,
+  FunnelStatus,
+  FunnelEnableResult,
+  FunnelDisableResult,
   TestLabInfo,
   ToolProbeResult,
   TransportFolderInfo,
@@ -769,6 +772,36 @@ export async function tailscaleConnect(): Promise<TailscaleConnectResult> {
     return await invoke<TailscaleConnectResult>('tailscale_connect');
   } catch {
     return { success: false, needs_auth: false, auth_url: null, message: 'Not available in browser mode.' };
+  }
+}
+
+/** Query the current Tailscale Funnel status (read-only). */
+export async function tailscaleFunnelStatus(): Promise<FunnelStatus> {
+  try {
+    return await invoke<FunnelStatus>('tailscale_funnel_status');
+  } catch {
+    return { enabled: false, public_hostname: null, local_port: null, public_port: 443, needs_activation: false, activation_url: null, message: 'Not available in browser mode.' };
+  }
+}
+
+/**
+ * Enable Tailscale Funnel (TCP 443 → localhost:local_port).
+ * Must only be called from a confirmed user action. Never run automatically.
+ */
+export async function tailscaleFunnelEnable(localPort: number): Promise<FunnelEnableResult> {
+  try {
+    return await invoke<FunnelEnableResult>('tailscale_funnel_enable', { localPort });
+  } catch {
+    return { success: false, needs_activation: false, activation_url: null, public_hostname: null, message: 'Not available in browser mode.' };
+  }
+}
+
+/** Disable Tailscale Funnel. Must only be called from a confirmed user action. */
+export async function tailscaleFunnelDisable(): Promise<FunnelDisableResult> {
+  try {
+    return await invoke<FunnelDisableResult>('tailscale_funnel_disable');
+  } catch {
+    return { success: false, message: 'Not available in browser mode.' };
   }
 }
 

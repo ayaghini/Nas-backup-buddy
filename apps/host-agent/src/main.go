@@ -36,12 +36,14 @@ func main() {
 	tailscaleAddr := getEnv("TAILSCALE_ADDRESS", "")
 	sftpBind := getEnv("NASBB_SFTP_BIND", "127.0.0.1")
 	sftpPortStr := getEnv("NASBB_SFTP_PORT", "2222")
+	sftpPublicPortStr := getEnv("NASBB_SFTP_PUBLIC_PORT", "")
 	sftpHost := getEnv("NASBB_SFTP_HOST", "127.0.0.1")
 
 	sftpPort, _ := strconv.Atoi(sftpPortStr)
 	if sftpPort == 0 {
 		sftpPort = 2222
 	}
+	sftpPublicPort, _ := strconv.Atoi(sftpPublicPortStr) // 0 means same as sftpPort
 
 	cfg, err := config.Load(configDir)
 	if err != nil {
@@ -77,7 +79,7 @@ func main() {
 		Int("sftpPort", sftpPort).
 		Msg("starting nasbb-agent")
 
-	ov := overlay.GetStatus(tailscaleAddr, sftpBind, sftpPort)
+	ov := overlay.GetStatus(tailscaleAddr, sftpBind, sftpPort, sftpPublicPort)
 	if ov.PublicExposureWarning {
 		log.Warn().Msg("SECURITY WARNING: SFTP is bound to " + sftpBind +
 			" without a configured TAILSCALE_ADDRESS. " +
@@ -105,10 +107,11 @@ func main() {
 		Lifecycle:     lc,
 		SFTPMgr:       sftpMgr,
 		OverlayStatus: ov,
-		TailscaleAddr: tailscaleAddr,
-		SFTPBind:      sftpBind,
-		SFTPPort:      sftpPort,
-		SFTPHost:      sftpHost,
+		TailscaleAddr:  tailscaleAddr,
+		SFTPBind:       sftpBind,
+		SFTPPort:       sftpPort,
+		SFTPPublicPort: sftpPublicPort,
+		SFTPHost:       sftpHost,
 	})
 
 	log.Info().Str("addr", bindAddr).Msg("listening")

@@ -39,7 +39,7 @@ func newTestServer(t *testing.T) (*httptest.Server, string) {
 	mgr := allocation.NewManager(configDir, stateDir, reposDir, evts, sftpMgr)
 	quotaPoller := sftp.NewQuotaPoller(mgr, sftpMgr, reposDir, evts)
 	lc := allocation.NewLifecycle(mgr, sftpMgr, quotaPoller, evts)
-	ov := overlay.GetStatus("", "127.0.0.1", 2222)
+	ov := overlay.GetStatus("", "127.0.0.1", 2222, 0)
 
 	srv := api.New(api.Options{
 		Cfg:           cfg,

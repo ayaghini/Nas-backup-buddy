@@ -86,7 +86,7 @@ func Generate(alloc *allocation.Allocation, cfg *config.Config, ov overlay.Statu
 		},
 		SFTP: inviteSFTP{
 			Host:     sftpHost,
-			Port:     ov.SFTPPort,
+			Port:     ov.PublicPort,
 			Username: alloc.Username,
 			Path:     "/repository",
 		},
