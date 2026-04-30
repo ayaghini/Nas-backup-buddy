@@ -118,6 +118,7 @@ pub fn probe_tcp_reachability(host: &str, port: u16) -> RemoteTargetProbeResult 
     }
 
     let start = Instant::now();
+    let mut last_err = String::new();
     for addr in &addrs {
         match TcpStream::connect_timeout(addr, Duration::from_secs(5)) {
             Ok(_) => {
@@ -130,7 +131,7 @@ pub fn probe_tcp_reachability(host: &str, port: u16) -> RemoteTargetProbeResult 
                     message: format!("TCP port {} reachable (overlay network OK; SSH/SFTP auth not verified)", port),
                 };
             }
-            Err(_) => continue,
+            Err(e) => { last_err = e.to_string(); continue; }
         }
     }
 
@@ -139,8 +140,8 @@ pub fn probe_tcp_reachability(host: &str, port: u16) -> RemoteTargetProbeResult 
         method: ProbeMethod::TcpConnect,
         latency_ms: None,
         message: format!(
-            "TCP port {} not reachable — verify overlay network and remote SFTP service",
-            port
+            "TCP port {} not reachable — {} (verify overlay network and remote SFTP service)",
+            port, last_err
         ),
     }
 }
