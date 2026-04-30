@@ -47,7 +47,7 @@ const NAV = [
 export function App() {
   return (
     <AppContextProvider>
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <div className="flex h-screen overflow-hidden bg-slate-950">
         {/* Sidebar */}
         <nav className="w-52 flex-shrink-0 border-r border-slate-800 flex flex-col">
