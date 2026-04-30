@@ -138,7 +138,11 @@ function parseHostInviteBundle(raw: unknown): ParseResult {
   }
 
   const expiresAt = o['expiresAt'] as string;
-  if (new Date(expiresAt).getTime() < Date.now()) {
+  const expiryMs = new Date(expiresAt).getTime();
+  if (Number.isNaN(expiryMs)) {
+    return { ok: false, error: `expiresAt is not a valid date: "${expiresAt}".` };
+  }
+  if (expiryMs < Date.now()) {
     return { ok: false, error: `Invite expired ${expiresAt}. Ask the host for a fresh invite.` };
   }
 
@@ -218,7 +222,7 @@ function SectionHeader({
 
 export function Peer() {
   const navigate = useNavigate();
-  const { updateRemoteRepositoryState, refreshReadiness, wizardConfig } = useApp();
+  const { updateRemoteRepositoryState, refreshReadiness, updateKopiaRepositoryFromBackup, wizardConfig } = useApp();
 
   // ── Local state ────────────────────────────────────────────────────────────
   const [loaded, setLoaded] = useState(false);
@@ -252,6 +256,9 @@ export function Peer() {
   const [backupRunning, setBackupRunning] = useState(false);
   const [backupResult, setBackupResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  // Previous-session note: shown when persistence had sftp/repo state but we don't restore it live.
+  const [previousSessionNote, setPreviousSessionNote] = useState<{ sftpStatus: string; repoReady: boolean } | null>(null);
+
   // UI
   const [openSection, setOpenSection] = useState<SectionId>('invite');
   const appMode = isTauri() ? 'tauri' : 'browser';
@@ -264,7 +271,7 @@ export function Peer() {
     if (!parseResult) return 'needs_invite';
     if (!parseResult.ok) return 'invite_invalid';
     if (!ownerPublicKey) return 'needs_key';
-    if (sftpResult?.status === 'ok') {
+    if (sftpResult?.status === 'ok' || sftpResult?.status === 'quota_warning') {
       if (repoResult?.initialized || repoResult?.already_existed) return 'repo_ready';
       return 'sftp_verified';
     }
@@ -294,8 +301,11 @@ export function Peer() {
       if (s.responseJson) setResponseJson(s.responseJson);
       if (s.hostKeyConfirmedForAllocId) setHostKeyConfirmedForAllocId(s.hostKeyConfirmedForAllocId);
       if (s.lastProbeStatus) setProbeResult({ status: s.lastProbeStatus, method: 'tcp_connect', latency_ms: null, message: s.lastProbeStatus });
-      if (s.lastSftpStatus) setSftpResult({ status: s.lastSftpStatus as SftpVerifyResult['status'], message: s.lastSftpStatus, write_test_passed: s.lastSftpStatus === 'ok', host_fingerprint: null, fingerprint_status: 'not_available', free_bytes: null, quota_warning: false });
-      if (s.lastRepoMessage) setRepoResult({ initialized: true, already_existed: true, message: s.lastRepoMessage });
+      // Don't restore sftpResult/repoResult as live state — SFTP connections are session-scoped
+      // and the host key / auth state may have changed since last session. Show a note instead.
+      if (s.lastSftpStatus || s.lastRepoMessage) {
+        setPreviousSessionNote({ sftpStatus: s.lastSftpStatus ?? 'unknown', repoReady: !!s.lastRepoMessage });
+      }
       setLoaded(true);
     });
   }, []);
@@ -448,6 +458,7 @@ export function Peer() {
   const handleVerify = useCallback(async () => {
     if (!invite || !effectiveSftpHost || !isHostKeyConfirmed) return;
     setVerifying(true);
+    setPreviousSessionNote(null);
     try {
       const result = await verifySftpTarget(
         effectiveSftpHost,
@@ -456,13 +467,31 @@ export function Peer() {
         invite.sftp.path,
         privateKeyRef || null,
       );
+
+      // Compare actual server fingerprint against what the invite advertised.
+      // Normalize by stripping the 'SHA256:' prefix — Go and Rust both emit the full form.
+      const inviteFp = invite.hostKey?.fingerprintSha256?.replace(/^SHA256:/i, '') ?? null;
+      const actualFp = result.host_fingerprint?.replace(/^SHA256:/i, '') ?? null;
+      if (inviteFp && actualFp && inviteFp !== actualFp) {
+        const mismatchResult: SftpVerifyResult = {
+          ...result,
+          status: 'host_key_mismatch',
+          message: `Host key mismatch — expected ${invite.hostKey!.fingerprintSha256}, got ${result.host_fingerprint}.`,
+        };
+        setSftpResult(mismatchResult);
+        void savePeerState({ lastSftpStatus: 'host_key_mismatch' });
+        updateRemoteRepositoryState('unreachable', -1);
+        refreshReadiness();
+        return;
+      }
+
       setSftpResult(result);
       void savePeerState({ lastSftpStatus: result.status });
-      const sharedStatus = result.status === 'ok' ? 'reachable' : result.status === 'auth_failed' ? 'auth_failed' : 'unreachable';
-      updateRemoteRepositoryState(sharedStatus, result.status === 'ok' ? 0 : -1);
+      const sftpOk = result.status === 'ok' || result.status === 'quota_warning';
+      const sharedStatus = sftpOk ? 'reachable' : result.status === 'auth_failed' ? 'auth_failed' : 'unreachable';
+      updateRemoteRepositoryState(sharedStatus, sftpOk ? 0 : -1);
       refreshReadiness();
       // Stay on 'connect' so the user can see and click "Create/connect repository".
-      // (Jumping to 'backup' before repo exists is confusing since that section is disabled.)
     } finally {
       setVerifying(false);
     }
@@ -510,12 +539,17 @@ export function Peer() {
         privateKeyRef || null,
       );
       setBackupResult({ success: result.success, message: result.success ? `Snapshot ${result.snapshot_id}` : result.log_line });
+      if (result.success) {
+        updateKopiaRepositoryFromBackup({ timestamp: result.timestamp });
+        updateRemoteRepositoryState('reachable', 0);
+        refreshReadiness();
+      }
     } catch (e) {
       setBackupResult({ success: false, message: e instanceof Error ? e.message : String(e) });
     } finally {
       setBackupRunning(false);
     }
-  }, [invite, effectiveSftpHost, sourceFolders, privateKeyRef, canRunBackup]);
+  }, [invite, effectiveSftpHost, sourceFolders, privateKeyRef, canRunBackup, updateKopiaRepositoryFromBackup, updateRemoteRepositoryState, refreshReadiness]);
 
   // ── Section toggle ────────────────────────────────────────────────────────
   const toggleSection = useCallback((id: SectionId) => {
@@ -739,6 +773,7 @@ export function Peer() {
               badge={
                 repoResult?.initialized || repoResult?.already_existed ? { label: 'repo ready', color: 'green' } :
                 sftpResult?.status === 'ok' ? { label: 'SFTP ok', color: 'sky' } :
+                sftpResult?.status === 'quota_warning' ? { label: 'SFTP ok (low space)', color: 'amber' } :
                 sftpResult?.status === 'auth_failed' ? { label: 'waiting for host', color: 'amber' } :
                 sftpResult ? { label: 'verify failed', color: 'red' as const } :
                 { label: 'pending', color: 'slate' }
@@ -748,6 +783,16 @@ export function Peer() {
             />
             {openSection === 'connect' && (
               <div className="px-4 pb-4 pt-3 border-t border-slate-800 space-y-4">
+
+                {/* Previous-session note — shown when we have persisted state but haven't re-verified this session */}
+                {previousSessionNote && !sftpResult && (
+                  <div className="px-2 py-1.5 rounded bg-slate-800/60 border border-slate-700 text-xs text-slate-400 flex items-start gap-1.5">
+                    <AlertTriangle size={11} className="mt-0.5 flex-shrink-0 text-amber-400" />
+                    Last session: SFTP {previousSessionNote.sftpStatus}
+                    {previousSessionNote.repoReady ? ', repository connected' : ''}.
+                    Re-run SFTP verify to continue this session.
+                  </div>
+                )}
 
                 {/* Host key confirmation */}
                 {invite?.hostKey?.fingerprintSha256 && (
@@ -828,9 +873,10 @@ export function Peer() {
                     {sftpResult && (
                       <span className={`flex items-center gap-1 text-xs ${
                         sftpResult.status === 'ok' ? 'text-emerald-400' :
+                        sftpResult.status === 'quota_warning' ? 'text-amber-400' :
                         sftpResult.status === 'auth_failed' ? 'text-amber-400' : 'text-red-400'
                       }`}>
-                        {sftpResult.status === 'ok' ? <CheckCircle size={11} /> : <AlertTriangle size={11} />}
+                        {(sftpResult.status === 'ok' || sftpResult.status === 'quota_warning') ? <CheckCircle size={11} /> : <AlertTriangle size={11} />}
                         {sftpResult.message}
                       </span>
                     )}
@@ -848,6 +894,11 @@ export function Peer() {
                   )}
                   {sftpResult?.free_bytes != null && (
                     <p className="text-xs text-slate-500">Remote free space: {formatBytes(sftpResult.free_bytes)}</p>
+                  )}
+                  {sftpResult?.status === 'quota_warning' && (
+                    <p className="text-xs text-amber-400 flex items-center gap-1">
+                      <AlertTriangle size={11} /> Less than 1 GiB free on host — backup may fail if it needs more space. Ask your host to free up storage.
+                    </p>
                   )}
                 </div>
 
@@ -867,7 +918,7 @@ export function Peer() {
                       <button
                         className="flex items-center gap-1.5 text-xs px-2 py-1 rounded bg-sky-700 hover:bg-sky-600 text-white disabled:opacity-50"
                         onClick={handleRepoConnect}
-                        disabled={sftpResult?.status !== 'ok' || repoConnecting}
+                        disabled={(sftpResult?.status !== 'ok' && sftpResult?.status !== 'quota_warning') || repoConnecting}
                       >
                         {repoConnecting ? <Loader2 size={11} className="animate-spin" /> : <Network size={11} />}
                         Create/connect repository
@@ -880,7 +931,7 @@ export function Peer() {
                       </span>
                     )}
                   </div>
-                  {sftpResult?.status !== 'ok' && hasPassword && ownerPublicKey && (
+                  {(sftpResult?.status !== 'ok' && sftpResult?.status !== 'quota_warning') && hasPassword && ownerPublicKey && (
                     <p className="text-xs text-slate-500">Run SFTP verify successfully before creating the repository.</p>
                   )}
                 </div>

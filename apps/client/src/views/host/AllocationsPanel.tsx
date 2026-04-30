@@ -71,6 +71,7 @@ function AllocationRow({
   alloc,
   token,
   apiUrl,
+  env,
   reachClass,
   agentOverlay,
   onRefresh,
@@ -78,6 +79,7 @@ function AllocationRow({
   alloc: HostAgentAllocation;
   token: string;
   apiUrl: string;
+  env: Partial<HostEnvValues>;
   reachClass: ReachabilityClass;
   agentOverlay: HostAgentOverlayStatus | null;
   onRefresh: () => void;
@@ -88,6 +90,7 @@ function AllocationRow({
   const [invite, setInvite] = useState<HostAgentInviteBundle | null>(null);
   const [responseText, setResponseText] = useState('');
   const [confirmLocalTest, setConfirmLocalTest] = useState(false);
+  const [confirmUnknown, setConfirmUnknown] = useState(false);
   const [confirmRetire, setConfirmRetire] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -107,6 +110,11 @@ function AllocationRow({
       );
       return;
     }
+    if (reachClass === 'unknown' && !confirmUnknown) {
+      setConfirmUnknown(true);
+      return;
+    }
+    setConfirmUnknown(false);
     if (reachClass === 'local_test_only' && !confirmLocalTest) {
       setConfirmLocalTest(true);
       return;
@@ -241,6 +249,17 @@ function AllocationRow({
             {/* Invite */}
             {(alloc.state === 'DRAFT' || alloc.state === 'EXPIRED') && (
               <>
+                {confirmUnknown && (
+                  <div className="w-full px-2 py-1.5 rounded bg-amber-900/30 border border-amber-700/40 text-xs text-amber-300">
+                    Network reachability is unknown (SFTP bind: <span className="font-mono">{env.NASBB_SFTP_BIND ?? 'unset'}</span>, overlay: <span className="font-mono">{env.TAILSCALE_ADDRESS ?? 'unset'}</span>).
+                    The invite may not work for remote owners. Continue anyway?
+                    <button
+                      className="ml-2 underline text-amber-200 hover:text-white"
+                      onClick={() => { setConfirmUnknown(false); void doGenerateInvite(); }}
+                    >Generate anyway</button>
+                    <button className="ml-2 text-slate-400 hover:text-slate-200" onClick={() => setConfirmUnknown(false)}>Cancel</button>
+                  </div>
+                )}
                 {confirmLocalTest && (
                   <div className="w-full px-2 py-1.5 rounded bg-amber-900/30 border border-amber-700/40 text-xs text-amber-300">
                     This is a local-test invite. The owner cannot connect from a remote machine. Continue?
@@ -552,6 +571,7 @@ export function AllocationsPanel({ token, apiUrl, env }: Props) {
               alloc={a}
               token={token}
               apiUrl={apiUrl}
+              env={env}
               reachClass={reachClass}
               agentOverlay={agentOverlay}
               onRefresh={load}
