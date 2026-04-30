@@ -207,6 +207,7 @@ function AllocationRow({
     ? Math.round((alloc.usedBytes / alloc.quotaBytes) * 100)
     : 0;
   const inviteExpired = alloc.inviteExpiresAt && new Date(alloc.inviteExpiresAt) < new Date();
+  const inviteUsesMagicDns = invite?.sftp?.host?.endsWith('.ts.net') ?? false;
 
   return (
     <div className="bg-slate-900 rounded border border-slate-800">
@@ -285,6 +286,12 @@ function AllocationRow({
             {invite && (
               <div className="w-full space-y-2">
                 <div className="text-xs text-slate-400">Host Invite Bundle generated:</div>
+                {inviteUsesMagicDns && (
+                  <div className="px-2 py-1.5 rounded bg-amber-900/30 border border-amber-700/40 text-xs text-amber-300 flex items-start gap-1.5">
+                    <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />
+                    This invite advertises a Tailscale MagicDNS name. For cross-account shared-device tests, set TAILSCALE_ADDRESS to the host's shared 100.x IP, save/restart, and generate a fresh invite unless the owner has already confirmed this name resolves.
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <button onClick={copyInvite} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-xs text-slate-200">
                     <ClipboardCopy size={11} /> Copy JSON

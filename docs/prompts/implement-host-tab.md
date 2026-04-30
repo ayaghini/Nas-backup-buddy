@@ -54,12 +54,12 @@ For real owner access over Tailscale, the host must set:
 
 ```text
 NASBB_SFTP_BIND=<host-tailscale-ip>
-TAILSCALE_ADDRESS=<host-tailscale-ip-or-magicdns-name>
+TAILSCALE_ADDRESS=<host-tailscale-ip>
 ```
 
 `NASBB_SFTP_BIND` must be a local bindable IP address. It must not be a MagicDNS hostname.
 
-`TAILSCALE_ADDRESS` is the advertised owner-facing address. It may be either a Tailscale IP or MagicDNS hostname.
+`TAILSCALE_ADDRESS` is the advertised owner-facing address. For cross-account Tailscale device sharing, prefer the shared `100.x` Tailscale IPv4. MagicDNS may be offered only as an explicit alternate after warning that it must resolve from the owner's account before invite generation.
 
 ## Read These Files Only
 
@@ -166,7 +166,7 @@ The desktop app already has Tailscale detection helpers. The Host tab should:
 2. Show whether Tailscale is installed, authenticated, and connected.
 3. Offer explicit user-triggered `tailscale up` only if existing app commands already support it and only after user confirmation.
 4. Prefer the host's Tailscale IPv4 address for `NASBB_SFTP_BIND`.
-5. Prefer MagicDNS for `TAILSCALE_ADDRESS` if available; otherwise use the Tailscale IPv4 address.
+5. Prefer the host's shared Tailscale IPv4 address for `TAILSCALE_ADDRESS`; MagicDNS is optional only when the owner can resolve that exact name.
 6. Warn if `TAILSCALE_ADDRESS` is set but `NASBB_SFTP_BIND` is still `127.0.0.1`.
 7. Warn if `NASBB_SFTP_BIND` is `0.0.0.0`.
 8. Never require public router port forwarding.
@@ -174,7 +174,7 @@ The desktop app already has Tailscale detection helpers. The Host tab should:
 The tab should make the recommended path obvious:
 
 ```text
-Tailscale connected -> use this Tailscale IP for SFTP bind -> use MagicDNS/IP for invite address -> restart Docker stack
+Tailscale connected -> use this Tailscale IP for SFTP bind -> advertise this Tailscale IP in invites -> restart Docker stack
 ```
 
 If Tailscale is not available, the tab may still allow local-only testing with:
@@ -385,20 +385,21 @@ Show:
 
 Actions:
 
-- Use detected Tailscale IP.
-- Use detected MagicDNS.
+- Use detected Tailscale IP for SFTP bind.
+- Use detected Tailscale IP for the advertised invite address.
+- Use detected MagicDNS for the advertised invite address only as an alternate.
 - Save env changes.
 - Restart stack.
 - Refresh host-agent status.
 
-The "Use detected Tailscale IP" action must write the IP only to `NASBB_SFTP_BIND`. The "Use detected MagicDNS" action may write only to `TAILSCALE_ADDRESS`.
+The "Use detected Tailscale IP for SFTP bind" action must write the IP only to `NASBB_SFTP_BIND`. A separate "Advertise this IP" action should write the same IP to `TAILSCALE_ADDRESS`. The "Use detected MagicDNS" action may write only to `TAILSCALE_ADDRESS` and must warn that cross-account owners may not be able to resolve it.
 
 Warnings:
 
 - `NASBB_SFTP_BIND=127.0.0.1` means remote owners cannot connect.
 - `TAILSCALE_ADDRESS` without non-loopback SFTP bind is not remote-ready.
 - `NASBB_SFTP_BIND=0.0.0.0` may expose SFTP publicly.
-- MagicDNS is valid for `TAILSCALE_ADDRESS`, not for `NASBB_SFTP_BIND`.
+- MagicDNS is valid only for `TAILSCALE_ADDRESS`, never for `NASBB_SFTP_BIND`, and is not the default recommendation for cross-account sharing.
 
 ### 3. Host Settings
 
@@ -719,7 +720,7 @@ Wire Tailscale detection into the Host tab.
 Implement recommended address selection:
 
 - `NASBB_SFTP_BIND`: Tailscale IPv4 only.
-- `TAILSCALE_ADDRESS`: MagicDNS if available, else Tailscale IPv4.
+- `TAILSCALE_ADDRESS`: shared Tailscale IPv4 by default; MagicDNS only as an explicit alternate after warning.
 
 Add warnings for unsafe or non-ready states.
 
@@ -729,6 +730,7 @@ Verification:
 - Tailscale connected state offers address choices.
 - Loopback-only SFTP state is labeled local-test only.
 - MagicDNS is never written to `NASBB_SFTP_BIND`.
+- The UI can write the detected Tailscale IPv4 to `TAILSCALE_ADDRESS` for cross-account invites.
 - Invite generation is blocked or strongly confirmed for `local_test_only`.
 - Invite generation is blocked for `advertised_blocked` unless the user fixes env settings.
 - `unsafe_public` is shown as a security warning.

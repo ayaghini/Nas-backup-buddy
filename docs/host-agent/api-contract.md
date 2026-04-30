@@ -350,7 +350,7 @@ Returned by `POST /invite`. Safe to write to a file for out-of-band transfer.
 | `hostKey.verificationNote` | string | Prompt to verify out-of-band |
 | `expiresAt` | RFC3339 | `now + 90 days` |
 
-When `TAILSCALE_ADDRESS` is not set: `overlay.host` and `sftp.host` are `""` and `overlay.note` explains the missing address.
+When `TAILSCALE_ADDRESS` is set, `overlay.host` and `sftp.host` use that advertised value. For cross-account Tailscale sharing, this should be the host's shared `100.x` Tailscale IPv4 unless the owner has already confirmed that the MagicDNS name resolves from their account. When `TAILSCALE_ADDRESS` is not set, the current agent falls back to the SFTP bind address when it is non-empty and not `0.0.0.0`; otherwise it falls back to `127.0.0.1`, which is suitable only for local testing.
 
 ---
 

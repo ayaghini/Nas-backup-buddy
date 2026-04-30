@@ -94,8 +94,8 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
     setRestartNeeded(true);
   }
 
-  function applyMagicDns(name: string) {
-    const updated = { ...localEnv, TAILSCALE_ADDRESS: name };
+  function applyAdvertisedAddress(address: string) {
+    const updated = { ...localEnv, TAILSCALE_ADDRESS: address };
     setLocalEnv(updated);
     setRestartNeeded(true);
   }
@@ -156,7 +156,7 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
             {ipv4s.length > 0 && (
               <div className="space-y-1 mt-1">
                 {ipv4s.map(ip => (
-                  <div key={ip} className="flex items-center gap-2">
+                  <div key={ip} className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-slate-400 font-mono">{ip}</span>
                     <button
                       onClick={() => applyTailscaleIp(ip)}
@@ -164,18 +164,27 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
                     >
                       Use for SFTP bind
                     </button>
+                    <button
+                      onClick={() => applyAdvertisedAddress(ip)}
+                      className="text-xs px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
+                    >
+                      Advertise this IP
+                    </button>
                   </div>
                 ))}
+                <div className="text-xs text-slate-500">
+                  For cross-account Tailscale sharing, advertise the shared 100.x IP; MagicDNS may not resolve for the owner.
+                </div>
               </div>
             )}
             {magicDns && (
-              <div className="flex items-center gap-2 mt-1">
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <span className="text-xs text-slate-400 font-mono">{magicDns}</span>
                 <button
-                  onClick={() => applyMagicDns(magicDns)}
+                  onClick={() => applyAdvertisedAddress(magicDns)}
                   className="text-xs px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
                 >
-                  Use for TAILSCALE_ADDRESS
+                  Advertise MagicDNS
                 </button>
               </div>
             )}
@@ -212,13 +221,13 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
           </label>
           <label className="block">
             <div className="text-xs text-slate-400 mb-0.5">
-              TAILSCALE_ADDRESS <span className="text-slate-600">(IP or MagicDNS shown to owners)</span>
+              TAILSCALE_ADDRESS <span className="text-slate-600">(advertised host in invites; use 100.x IP for shared-device owners)</span>
             </div>
             <input
               type="text"
               value={localEnv.TAILSCALE_ADDRESS ?? ''}
               onChange={e => { setLocalEnv(v => ({ ...v, TAILSCALE_ADDRESS: e.target.value })); setRestartNeeded(true); }}
-              placeholder="e.g. 100.64.0.1 or myhost.example.ts.net"
+              placeholder="e.g. 100.64.0.1"
               className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 font-mono"
             />
           </label>

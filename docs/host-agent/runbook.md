@@ -33,7 +33,7 @@
 
 ## Configure Tailscale
 
-Set `TAILSCALE_ADDRESS` in `compose/.env` to your host's Tailscale IP or MagicDNS hostname:
+Set `TAILSCALE_ADDRESS` in `compose/.env` to your host's shared Tailscale IPv4. This is the address written into owner invites and is the reliable choice for cross-account device sharing:
 ```
 TAILSCALE_ADDRESS=100.64.0.1
 ```
@@ -41,6 +41,7 @@ Also set `NASBB_SFTP_BIND` to the same address so the SFTP port is reachable fro
 ```
 NASBB_SFTP_BIND=100.64.0.1
 ```
+Only use a MagicDNS hostname for `TAILSCALE_ADDRESS` after confirming that the owner device can resolve that exact name from their Tailscale account.
 Restart the stack to apply:
 ```bash
 docker compose -f compose/docker-compose.yml up -d

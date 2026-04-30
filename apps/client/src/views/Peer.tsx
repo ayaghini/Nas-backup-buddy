@@ -263,8 +263,10 @@ export function Peer() {
   const [openSection, setOpenSection] = useState<SectionId>('invite');
   const appMode = isTauri() ? 'tauri' : 'browser';
 
-  // Host resolved from invite; user can override when invite carries no host.
-  const effectiveSftpHost = sftpHost || manualSftpHost;
+  // Host resolved from invite; user override wins so cross-account Tailscale DNS
+  // failures can be repaired without asking the host to issue a new invite.
+  const effectiveSftpHost = manualSftpHost.trim() || sftpHost;
+  const inviteUsesMagicDns = sftpHost.endsWith('.ts.net');
 
   // ── Derived phase ──────────────────────────────────────────────────────────
   const phase = ((): PeerPhase => {
@@ -340,7 +342,17 @@ export function Peer() {
       setProbeResult(null);
       setSftpResult(null);
       setRepoResult(null);
-      void savePeerState({ inviteJson: text, manualSftpHost: parsed.sftpHost ? '' : undefined, ownerPublicKey: '', privateKeyPathRef: '', responseJson: '', lastPhase: 'needs_key' });
+      void savePeerState({
+        inviteJson: text,
+        manualSftpHost: parsed.sftpHost ? '' : undefined,
+        ownerPublicKey: '',
+        privateKeyPathRef: '',
+        responseJson: '',
+        lastProbeStatus: '',
+        lastSftpStatus: '',
+        lastRepoMessage: '',
+        lastPhase: 'needs_key',
+      });
     } else {
       void savePeerState({ inviteJson: text, lastPhase: parsed.ok ? 'invite_invalid' : 'invite_invalid' });
     }
@@ -649,7 +661,10 @@ export function Peer() {
                     <Row label="Connection name" value={invite.connectionName} />
                     <Row label="Match ID" value={invite.matchId} />
                     <Row label="Allocation ID" value={invite.allocId} />
-                    <Row label="SFTP host" value={effectiveSftpHost || '(missing)'} />
+                    <Row label="Invite SFTP host" value={sftpHost || '(missing)'} />
+                    {manualSftpHost.trim() && (
+                      <Row label="Using host override" value={manualSftpHost.trim()} />
+                    )}
                     <Row label="SFTP port" value={String(invite.sftp.port)} />
                     <Row label="SFTP username" value={invite.sftp.username} />
                     <Row label="SFTP path" value={invite.sftp.path} />
@@ -665,29 +680,38 @@ export function Peer() {
                         {invite.hostKey.verificationNote}
                       </div>
                     )}
-                    {!sftpHost && (
-                      <div className="space-y-1.5 pt-1">
-                        <div className="text-xs text-amber-400 flex gap-1 items-start">
-                          <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />
-                          Invite has no SFTP host (Tailscale not configured on host). Enter the host address manually:
-                        </div>
-                        <input
-                          className="w-full bg-slate-900 border border-amber-700 rounded px-3 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-600"
-                          placeholder="e.g. 192.168.1.100 or hostname"
-                          value={manualSftpHost}
-                          onChange={e => {
-                            setManualSftpHost(e.target.value);
-                            void savePeerState({ manualSftpHost: e.target.value });
-                          }}
-                        />
-                        {!effectiveSftpHost && (
-                          <div className="text-xs text-red-400 flex gap-1 items-start">
-                            <XCircle size={11} className="mt-0.5 flex-shrink-0" />
-                            No host address — cannot probe or verify until one is provided.
-                          </div>
-                        )}
+                    {inviteUsesMagicDns && (
+                      <div className="text-xs text-amber-400 flex gap-1 items-start pt-1">
+                        <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />
+                        This invite uses a Tailscale MagicDNS name. If this device is in a different Tailscale account, use the host's shared 100.x IP in the override below.
                       </div>
                     )}
+                    <div className="space-y-1.5 pt-1">
+                      <label className="text-xs text-slate-400">Host override (optional)</label>
+                      <input
+                        className={`w-full bg-slate-900 border rounded px-3 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-600 ${!sftpHost ? 'border-amber-700' : 'border-slate-700'}`}
+                        placeholder="Use the host's shared Tailscale IPv4, e.g. 100.x.y.z"
+                        value={manualSftpHost}
+                        onChange={e => {
+                          const value = e.target.value;
+                          setManualSftpHost(value);
+                          setProbeResult(null);
+                          setSftpResult(null);
+                          setRepoResult(null);
+                          setPreviousSessionNote(null);
+                          void savePeerState({ manualSftpHost: value, lastProbeStatus: '', lastSftpStatus: '', lastRepoMessage: '' });
+                        }}
+                      />
+                      <div className="text-xs text-slate-500">
+                        If TCP probe cannot resolve the invite host, ask the host for the shared device's Tailscale IPv4 and enter it here.
+                      </div>
+                      {!effectiveSftpHost && (
+                        <div className="text-xs text-red-400 flex gap-1 items-start">
+                          <XCircle size={11} className="mt-0.5 flex-shrink-0" />
+                          No host address — cannot probe or verify until one is provided.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -850,6 +874,11 @@ export function Peer() {
                       </span>
                     )}
                   </div>
+                  {probeResult?.message.toLowerCase().includes('cannot resolve') && (
+                    <p className="text-xs text-amber-400">
+                      The invite host is not resolving on this device. For a shared Tailscale device from another account, use the host's 100.x Tailscale IPv4 in the Invite section override.
+                    </p>
+                  )}
                   {!effectiveSftpHost && ownerPublicKey && (
                     <p className="text-xs text-amber-400">Enter the host address in the Invite section to enable probing.</p>
                   )}

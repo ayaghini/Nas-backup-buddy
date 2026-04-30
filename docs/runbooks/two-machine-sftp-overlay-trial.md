@@ -23,7 +23,7 @@ This is the Phase 1 POC the project requires before advancing to Phase 2 alpha m
 - [ ] OpenSSH server (`sshd`) running on Machine B.
 - [ ] Tailscale (or equivalent) installed and authenticated on both machines (each user signs in to their own account).
 - [ ] Machine B has shared their device with Machine A, or both are on a mutually reachable tailnet path.
-- [ ] Machine B's Tailscale MagicDNS hostname or overlay IP is known to Machine A.
+- [ ] Machine B's shared Tailscale IPv4 (`100.x.y.z`) is known to Machine A. MagicDNS can be tested too, but the IPv4 is the reliable invite address for cross-account device sharing.
 - [ ] Backup encryption password decided (not written down yet — store in OS keychain).
 
 ---
@@ -54,9 +54,10 @@ If both machines already have Tailscale installed and can reach each other (via 
 # On each machine: confirm Tailscale is running
 tailscale status
 
-# Get this machine's Tailscale IP
+# Get this machine's Tailscale IP. Use this as the advertised address for
+# cross-account shared-device trials.
 tailscale ip -4
-# MagicDNS hostname (preferred — more stable than IP):
+# MagicDNS hostname (optional; verify it resolves from the other account first):
 # Run: tailscale status --json
 # Look for "DNSName" in the "Self" block, e.g. "my-mac.tailnet-name.ts.net"
 # (The NAS Backup Buddy Overlay tab shows this automatically)
@@ -88,9 +89,10 @@ Each user sets up Tailscale independently on their own machine, then Machine B s
 
 4. **Confirm reachability**:
    ```bash
-   # On Machine A — ping Machine B's Tailscale address
+   # On Machine A — ping Machine B's shared Tailscale IPv4
+   ping 100.x.x.x
+   # Optional: test MagicDNS only if you plan to advertise that name in invites
    ping machine-b.tailnet-name.ts.net
-   # or: ping 100.x.x.x
    ```
 
 ### Path C: Headscale (self-hosted control server)
@@ -125,16 +127,16 @@ tailscale up --login-server https://your-headscale-server
 # Confirm Tailscale is up
 tailscale status
 
-# Note the Machine B overlay IP or hostname — you will give this to Machine A
+# Note the Machine B overlay IP — you will give this to Machine A
 tailscale ip -4
-# or use MagicDNS hostname: hostname.tailnet-name.ts.net
+# Optional only after testing from Machine A: hostname.tailnet-name.ts.net
 ```
 
 ### On Machine A (owner)
 
 ```bash
 # Confirm overlay connectivity to Machine B
-ping <machine-b-overlay-ip-or-hostname>
+ping <machine-b-tailscale-ipv4>
 ```
 
 ---
@@ -149,7 +151,7 @@ Use the NAS Backup Buddy client app **Host** tab. The current v1 host path is th
 4. Start the host stack.
 5. In **Tailscale & Network**, set:
    - `NASBB_SFTP_BIND` to Machine B's Tailscale IPv4 address.
-   - `TAILSCALE_ADDRESS` to Machine B's MagicDNS hostname or Tailscale address.
+   - `TAILSCALE_ADDRESS` to Machine B's shared Tailscale IPv4 (`100.x.y.z`) for cross-account sharing. Use MagicDNS only after confirming that exact name resolves from Machine A.
 6. Restart the stack after changing host settings.
 7. Create an allocation with the trial quota.
 8. Export the Host Invite Bundle JSON.
@@ -164,7 +166,7 @@ The invite JSON looks like:
   "matchId": "match-abc123",
   "allocId": "alloc_a1b2c3d4e5f6",
   "sftp": {
-    "host": "machine-b.tailnet.ts.net",
+    "host": "100.64.0.10",
     "port": 2222,
     "username": "nabb_1234abcd",
     "path": "/repository"
@@ -202,7 +204,8 @@ Machine B then imports the Owner Access Response in **Host**. The Docker host-ag
 ### Option A: Use the app (recommended)
 
 1. In the **Peer** tab, confirm the invite is imported and the host has imported the Owner Access Response.
-2. Click **Verify SFTP** — verifies SSH authentication, path access, and write test.
+2. Click **Probe TCP**. If the result says `Cannot resolve peer overlay address`, the invite contains a hostname that Machine A cannot resolve. Enter Machine B's shared `100.x` Tailscale IPv4 in the Peer tab host override, or ask Machine B to regenerate the invite with `TAILSCALE_ADDRESS` set to that IPv4.
+3. Click **Verify SFTP** — verifies SSH authentication, path access, and write test.
    - **Expected result:** `SFTP verified` with write test passed.
 
 ### Option B: Command line
