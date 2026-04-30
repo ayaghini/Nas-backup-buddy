@@ -14,16 +14,12 @@ thiserror = "1"
 toml = "0.8"
 tempfile = "3"
 # Native SSH/SFTP — eliminates external sftp binary dependency.
-# Links against libssh2 (available on macOS via system OpenSSH / Homebrew;
-# on Linux install libssh2-dev; on Windows via OpenSSH optional feature or Git).
+# Crypto backend: OpenSSL on macOS/Linux; WinCNG (built into Windows) on Windows.
+# Linux build: install libssh2-dev (apt) or libssh2-devel (yum).
+# macOS build: libssh2 available via Homebrew or system OpenSSH.
+# Windows build: uses WinCNG — no OpenSSL or Perl required.
 ssh2 = "0.9"
 # Base64 encoding for SHA-256 host-key fingerprints (OpenSSH standard format).
 base64 = "0.22"
-
-# On Windows, vendor OpenSSL so the binary does not require external DLLs.
-# The ssh2 crate's libssh2-sys dep links against openssl-sys; vendoring compiles
-# OpenSSL from source using MSVC/MinGW (no separate OpenSSL installation needed).
-[target.'cfg(target_os = "windows")'.dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
 
 [dev-dependencies]
