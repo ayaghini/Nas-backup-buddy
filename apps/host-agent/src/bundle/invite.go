@@ -45,12 +45,31 @@ type inviteHostKey struct {
 	VerificationNote  string `json:"verificationNote"`
 }
 
+// sftpHostForInvite returns the best available SFTP host for the invite bundle.
+//
+// Priority:
+//  1. Tailscale/overlay address — reachable across the internet.
+//  2. SFTP bind address — usable on the local network or for same-machine testing.
+//     Skipped when bind is 0.0.0.0 (all-interfaces, not a routable address).
+//  3. "127.0.0.1" — last resort for local-only testing.
+func sftpHostForInvite(ov overlay.Status, sftpBind string) string {
+	if ov.HostAddress != "" {
+		return ov.HostAddress
+	}
+	if sftpBind != "" && sftpBind != "0.0.0.0" {
+		return sftpBind
+	}
+	return "127.0.0.1"
+}
+
 func Generate(alloc *allocation.Allocation, cfg *config.Config, ov overlay.Status, fingerprint string) HostInviteBundle {
 	expiresAt := time.Now().UTC().AddDate(0, 0, 90).Format(time.RFC3339)
 
+	sftpHost := sftpHostForInvite(ov, cfg.SFTPBindAddress)
+
 	overlayNote := "Host SFTP is reachable at this Tailscale address."
 	if !ov.Available {
-		overlayNote = "SFTP host address not configured. Set TAILSCALE_ADDRESS before generating invites."
+		overlayNote = "Tailscale not configured. Using local/bind address — only reachable on the same machine or local network."
 	}
 
 	return HostInviteBundle{
@@ -62,11 +81,11 @@ func Generate(alloc *allocation.Allocation, cfg *config.Config, ov overlay.Statu
 		ConnectionName:   alloc.ConnectionName,
 		Overlay: inviteOverlay{
 			Provider: "tailscale",
-			Host:     ov.HostAddress,
+			Host:     sftpHost,
 			Note:     overlayNote,
 		},
 		SFTP: inviteSFTP{
-			Host:     ov.HostAddress,
+			Host:     sftpHost,
 			Port:     ov.SFTPPort,
 			Username: alloc.Username,
 			Path:     "/repository",

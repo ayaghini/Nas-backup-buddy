@@ -50,6 +50,7 @@ function isTauri() {
 
 interface PeerTabState {
   inviteJson: string;
+  manualSftpHost: string;
   ownerDeviceLabel: string;
   ownerPublicKey: string;
   privateKeyPathRef: string;
@@ -227,6 +228,7 @@ export function Peer() {
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [invite, setInvite] = useState<HostAgentInviteBundle | null>(null);
   const [sftpHost, setSftpHost] = useState('');
+  const [manualSftpHost, setManualSftpHost] = useState('');
 
   // Response
   const [deviceLabel, setDeviceLabel] = useState('Owner device');
@@ -253,6 +255,9 @@ export function Peer() {
   // UI
   const [openSection, setOpenSection] = useState<SectionId>('invite');
   const appMode = isTauri() ? 'tauri' : 'browser';
+
+  // Host resolved from invite; user can override when invite carries no host.
+  const effectiveSftpHost = sftpHost || manualSftpHost;
 
   // ── Derived phase ──────────────────────────────────────────────────────────
   const phase = ((): PeerPhase => {
@@ -282,6 +287,7 @@ export function Peer() {
           }
         } catch { /* ignore parse failures on restore */ }
       }
+      if (s.manualSftpHost) setManualSftpHost(s.manualSftpHost);
       if (s.ownerDeviceLabel) setDeviceLabel(s.ownerDeviceLabel);
       if (s.ownerPublicKey) setOwnerPublicKey(s.ownerPublicKey);
       if (s.privateKeyPathRef) setPrivateKeyRef(s.privateKeyPathRef);
@@ -420,10 +426,10 @@ export function Peer() {
 
   // ── TCP probe ──────────────────────────────────────────────────────────────
   const handleProbe = useCallback(async () => {
-    if (!sftpHost || !invite) return;
+    if (!effectiveSftpHost || !invite) return;
     setProbing(true);
     try {
-      const result = await probeRemoteTarget(sftpHost, invite.sftp.port);
+      const result = await probeRemoteTarget(effectiveSftpHost, invite.sftp.port);
       setProbeResult(result);
       void savePeerState({ lastProbeStatus: result.status });
       const sharedStatus = result.status === 'tcp_port_reachable' ? 'reachable' : 'unreachable';
@@ -431,15 +437,15 @@ export function Peer() {
     } finally {
       setProbing(false);
     }
-  }, [sftpHost, invite, updateRemoteRepositoryState]);
+  }, [effectiveSftpHost, invite, updateRemoteRepositoryState]);
 
   // ── SFTP verify ───────────────────────────────────────────────────────────
   const handleVerify = useCallback(async () => {
-    if (!invite || !sftpHost || !isHostKeyConfirmed) return;
+    if (!invite || !effectiveSftpHost || !isHostKeyConfirmed) return;
     setVerifying(true);
     try {
       const result = await verifySftpTarget(
-        sftpHost,
+        effectiveSftpHost,
         invite.sftp.port,
         invite.sftp.username,
         invite.sftp.path,
@@ -454,15 +460,15 @@ export function Peer() {
     } finally {
       setVerifying(false);
     }
-  }, [invite, sftpHost, isHostKeyConfirmed, privateKeyRef, updateRemoteRepositoryState, refreshReadiness]);
+  }, [invite, effectiveSftpHost, isHostKeyConfirmed, privateKeyRef, updateRemoteRepositoryState, refreshReadiness]);
 
   // ── Kopia repo create/connect ─────────────────────────────────────────────
   const handleRepoConnect = useCallback(async () => {
-    if (!invite || !sftpHost || !hasPassword) return;
+    if (!invite || !effectiveSftpHost || !hasPassword) return;
     setRepoConnecting(true);
     try {
       const result = await initializeKopiaSftpRepository(
-        sftpHost,
+        effectiveSftpHost,
         invite.sftp.username,
         invite.sftp.path,
         invite.sftp.port,
@@ -477,20 +483,20 @@ export function Peer() {
     } finally {
       setRepoConnecting(false);
     }
-  }, [invite, sftpHost, hasPassword, privateKeyRef, updateRemoteRepositoryState, refreshReadiness]);
+  }, [invite, effectiveSftpHost, hasPassword, privateKeyRef, updateRemoteRepositoryState, refreshReadiness]);
 
   // ── Backup ────────────────────────────────────────────────────────────────
   const sourceFolders = wizardConfig?.source_folders ?? [];
-  const canRunBackup = phase === 'repo_ready' && sourceFolders.length > 0 && invite != null && sftpHost !== '';
+  const canRunBackup = phase === 'repo_ready' && sourceFolders.length > 0 && invite != null && effectiveSftpHost !== '';
 
   const handleRunBackup = useCallback(async () => {
-    if (!invite || !sftpHost || !canRunBackup) return;
+    if (!invite || !effectiveSftpHost || !canRunBackup) return;
     setBackupRunning(true);
     setBackupResult(null);
     try {
       const result = await runRealSftpBackupFromConfig(
         sourceFolders,
-        sftpHost,
+        effectiveSftpHost,
         invite.sftp.username,
         invite.sftp.path,
         invite.sftp.port,
@@ -502,7 +508,7 @@ export function Peer() {
     } finally {
       setBackupRunning(false);
     }
-  }, [invite, sftpHost, sourceFolders, privateKeyRef, canRunBackup]);
+  }, [invite, effectiveSftpHost, sourceFolders, privateKeyRef, canRunBackup]);
 
   // ── Section toggle ────────────────────────────────────────────────────────
   const toggleSection = useCallback((id: SectionId) => {
@@ -519,7 +525,7 @@ export function Peer() {
       case 'needs_key':        return 'Generate your SSH key and copy the Owner Access Response to the host.';
       case 'response_ready':   return 'Send the response JSON to your host and ask them to import it in Host → Allocations.';
       case 'waiting_for_host': return 'Host has not yet imported your response. Ask them to import it, then re-run SFTP verify.';
-      case 'sftp_verified':    return sftpHost ? 'Create or connect the Kopia SFTP repository.' : 'SFTP verified — create repository.';
+      case 'sftp_verified':    return effectiveSftpHost ? 'Create or connect the Kopia SFTP repository.' : 'SFTP verified — create repository.';
       case 'repo_ready':       return sourceFolders.length > 0 ? 'Run backup.' : 'Repository ready. Add source folders in Backup Plan, then run backup.';
       case 'backup_ready':     return 'Run backup.';
       case 'blocked':          return 'A blocker was detected — see Connect section for details.';
@@ -602,7 +608,7 @@ export function Peer() {
                     <Row label="Connection name" value={invite.connectionName} />
                     <Row label="Match ID" value={invite.matchId} />
                     <Row label="Allocation ID" value={invite.allocId} />
-                    <Row label="SFTP host" value={sftpHost || '(missing — blocked)'} />
+                    <Row label="SFTP host" value={effectiveSftpHost || '(missing)'} />
                     <Row label="SFTP port" value={String(invite.sftp.port)} />
                     <Row label="SFTP username" value={invite.sftp.username} />
                     <Row label="SFTP path" value={invite.sftp.path} />
@@ -619,9 +625,26 @@ export function Peer() {
                       </div>
                     )}
                     {!sftpHost && (
-                      <div className="text-xs text-red-400 flex gap-1 items-start pt-1">
-                        <XCircle size={11} className="mt-0.5 flex-shrink-0" />
-                        No SFTP host in invite. Ask the host for a remote-ready invite with sftp.host or overlay.host set.
+                      <div className="space-y-1.5 pt-1">
+                        <div className="text-xs text-amber-400 flex gap-1 items-start">
+                          <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />
+                          Invite has no SFTP host (Tailscale not configured on host). Enter the host address manually:
+                        </div>
+                        <input
+                          className="w-full bg-slate-900 border border-amber-700 rounded px-3 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-sky-600"
+                          placeholder="e.g. 192.168.1.100 or hostname"
+                          value={manualSftpHost}
+                          onChange={e => {
+                            setManualSftpHost(e.target.value);
+                            void savePeerState({ manualSftpHost: e.target.value });
+                          }}
+                        />
+                        {!effectiveSftpHost && (
+                          <div className="text-xs text-red-400 flex gap-1 items-start">
+                            <XCircle size={11} className="mt-0.5 flex-shrink-0" />
+                            No host address — cannot probe or verify until one is provided.
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -763,7 +786,7 @@ export function Peer() {
                     <button
                       className="flex items-center gap-1.5 text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 disabled:opacity-50"
                       onClick={handleProbe}
-                      disabled={!sftpHost || probing || !ownerPublicKey}
+                      disabled={!effectiveSftpHost || probing || !ownerPublicKey}
                     >
                       {probing ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
                       Probe TCP
@@ -775,8 +798,8 @@ export function Peer() {
                       </span>
                     )}
                   </div>
-                  {!sftpHost && ownerPublicKey && (
-                    <p className="text-xs text-red-400">No SFTP host in invite — cannot probe. Ask the host for an updated invite.</p>
+                  {!effectiveSftpHost && ownerPublicKey && (
+                    <p className="text-xs text-amber-400">Enter the host address in the Invite section to enable probing.</p>
                   )}
                 </div>
 
@@ -787,7 +810,7 @@ export function Peer() {
                     <button
                       className="flex items-center gap-1.5 text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 disabled:opacity-50"
                       onClick={handleVerify}
-                      disabled={!isHostKeyConfirmed || verifying || !ownerPublicKey || !sftpHost}
+                      disabled={!isHostKeyConfirmed || verifying || !ownerPublicKey || !effectiveSftpHost}
                     >
                       {verifying ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
                       Verify SFTP
