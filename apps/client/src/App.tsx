@@ -97,7 +97,7 @@ export function App() {
             <Route path="/peer-connection" element={<Navigate to="/peer" replace />} />
             <Route path="/peer-storage" element={<Navigate to="/peer" replace />} />
             <Route path="/overlay"      element={<Navigate to="/peer" replace />} />
-            <Route path="/syncthing"    element={<Navigate to="/peer-connection?section=advanced" replace />} />
+            <Route path="/syncthing"    element={<Navigate to="/peer" replace />} />
             <Route path="/drills"       element={<RestoreDrill />} />
             <Route path="/health"       element={<HealthChecks />} />
             <Route path="/recovery"     element={<RecoveryKey />} />

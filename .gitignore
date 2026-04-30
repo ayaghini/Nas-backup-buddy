@@ -23,6 +23,9 @@ build/
 target/
 apps/client/src-tauri/gen/
 
+# Go compiled binaries — build locally with `go build`
+apps/host-agent/bin/
+
 # Python / agent experiments
 __pycache__/
 *.py[cod]
