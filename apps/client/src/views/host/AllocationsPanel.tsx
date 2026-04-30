@@ -24,6 +24,7 @@ import type { HostEnvValues } from '../../lib/host-agent-types';
 import {
   createAllocation,
   generateInvite,
+  getOverlayStatus,
   importOwnerResponse,
   listAllocations,
   resumeAllocation,
@@ -32,6 +33,7 @@ import {
   validateOwnerResponseShape,
   errorMessage,
 } from '../../lib/host-agent-api';
+import type { HostAgentOverlayStatus } from '../../lib/host-agent-types';
 
 interface Props {
   token: string;
@@ -70,12 +72,14 @@ function AllocationRow({
   token,
   apiUrl,
   reachClass,
+  agentOverlay,
   onRefresh,
 }: {
   alloc: HostAgentAllocation;
   token: string;
   apiUrl: string;
   reachClass: ReachabilityClass;
+  agentOverlay: HostAgentOverlayStatus | null;
   onRefresh: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -88,12 +92,23 @@ function AllocationRow({
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function doGenerateInvite() {
-    if (reachClass === 'local_test_only' && !confirmLocalTest) {
-      setConfirmLocalTest(true);
-      return;
-    }
     if (reachClass === 'advertised_blocked' || reachClass === 'unsafe_public') {
       setError(`Cannot generate invite in ${reachClass} state. Fix SFTP/Tailscale settings first.`);
+      return;
+    }
+    // Detect stale agent overlay: .env says overlay_ready but running agent has no host address.
+    // This happens when TAILSCALE_ADDRESS was set in .env after the container was started.
+    // Fix: go to Tailscale & Network → Save & Restart (uses `docker compose up -d`).
+    if (reachClass === 'overlay_ready' && agentOverlay !== null && !agentOverlay.hostAddress) {
+      setError(
+        'The running agent has an empty overlay address — the container was started before ' +
+        'TAILSCALE_ADDRESS was configured. Go to Tailscale & Network and click "Save & Restart" ' +
+        'to recreate the container with the current .env.'
+      );
+      return;
+    }
+    if (reachClass === 'local_test_only' && !confirmLocalTest) {
+      setConfirmLocalTest(true);
       return;
     }
     setConfirmLocalTest(false);
@@ -354,6 +369,7 @@ function AllocationRow({
 
 export function AllocationsPanel({ token, apiUrl, env }: Props) {
   const [allocs, setAllocs] = useState<HostAgentAllocation[]>([]);
+  const [agentOverlay, setAgentOverlay] = useState<HostAgentOverlayStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -373,8 +389,12 @@ export function AllocationsPanel({ token, apiUrl, env }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const a = await listAllocations(token, apiUrl);
+      const [a, ov] = await Promise.all([
+        listAllocations(token, apiUrl),
+        getOverlayStatus(token, apiUrl).catch(() => null),
+      ]);
       setAllocs(a);
+      setAgentOverlay(ov);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -432,6 +452,17 @@ export function AllocationsPanel({ token, apiUrl, env }: Props) {
       {reachClass === 'local_test_only' && (
         <div className="px-3 py-2 rounded bg-amber-900/20 border border-amber-700/30 text-xs text-amber-300">
           Local test mode — invites will include a warning that remote owners cannot connect.
+        </div>
+      )}
+      {/* Stale agent overlay: .env has TAILSCALE_ADDRESS but running container was started without it */}
+      {reachClass === 'overlay_ready' && agentOverlay !== null && !agentOverlay.hostAddress && (
+        <div className="px-3 py-2 rounded bg-amber-900/30 border border-amber-700/40 text-xs text-amber-300 flex items-start gap-2">
+          <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
+          <span>
+            Agent is running with an empty TAILSCALE_ADDRESS — the container was created before
+            the .env was configured. Invites generated now will have no host address.
+            Go to <strong>Tailscale &amp; Network</strong> and click <strong>Save &amp; Restart</strong> to fix.
+          </span>
         </div>
       )}
 
@@ -522,6 +553,7 @@ export function AllocationsPanel({ token, apiUrl, env }: Props) {
               token={token}
               apiUrl={apiUrl}
               reachClass={reachClass}
+              agentOverlay={agentOverlay}
               onRefresh={load}
             />
           ))}

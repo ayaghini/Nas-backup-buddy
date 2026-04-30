@@ -318,6 +318,11 @@ export function Peer() {
     if (parsed.ok && parsed.invite) {
       setInvite(parsed.invite);
       setSftpHost(parsed.sftpHost ?? '');
+      // Clear the manual override when the new invite already has a host — stale
+      // overrides would otherwise silently shadow the invite's host.
+      if (parsed.sftpHost) {
+        setManualSftpHost('');
+      }
       // Reset downstream state when a new invite is imported
       setOwnerPublicKey('');
       setPrivateKeyRef('');
@@ -325,7 +330,7 @@ export function Peer() {
       setProbeResult(null);
       setSftpResult(null);
       setRepoResult(null);
-      void savePeerState({ inviteJson: text, ownerPublicKey: '', privateKeyPathRef: '', responseJson: '', lastPhase: 'needs_key' });
+      void savePeerState({ inviteJson: text, manualSftpHost: parsed.sftpHost ? '' : undefined, ownerPublicKey: '', privateKeyPathRef: '', responseJson: '', lastPhase: 'needs_key' });
     } else {
       void savePeerState({ inviteJson: text, lastPhase: parsed.ok ? 'invite_invalid' : 'invite_invalid' });
     }
@@ -456,7 +461,8 @@ export function Peer() {
       const sharedStatus = result.status === 'ok' ? 'reachable' : result.status === 'auth_failed' ? 'auth_failed' : 'unreachable';
       updateRemoteRepositoryState(sharedStatus, result.status === 'ok' ? 0 : -1);
       refreshReadiness();
-      if (result.status === 'ok') setOpenSection('backup');
+      // Stay on 'connect' so the user can see and click "Create/connect repository".
+      // (Jumping to 'backup' before repo exists is confusing since that section is disabled.)
     } finally {
       setVerifying(false);
     }
@@ -478,6 +484,7 @@ export function Peer() {
       void savePeerState({ lastRepoMessage: result.message, lastPhase: 'repo_ready' });
       updateRemoteRepositoryState('reachable', 0);
       refreshReadiness();
+      setOpenSection('backup');
     } catch (e) {
       setRepoResult({ initialized: false, already_existed: false, message: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -525,7 +532,7 @@ export function Peer() {
       case 'needs_key':        return 'Generate your SSH key and copy the Owner Access Response to the host.';
       case 'response_ready':   return 'Send the response JSON to your host and ask them to import it in Host → Allocations.';
       case 'waiting_for_host': return 'Host has not yet imported your response. Ask them to import it, then re-run SFTP verify.';
-      case 'sftp_verified':    return effectiveSftpHost ? 'Create or connect the Kopia SFTP repository.' : 'SFTP verified — create repository.';
+      case 'sftp_verified':    return 'SFTP verified. Create or connect the Kopia SFTP repository in the Connect section.';
       case 'repo_ready':       return sourceFolders.length > 0 ? 'Run backup.' : 'Repository ready. Add source folders in Backup Plan, then run backup.';
       case 'backup_ready':     return 'Run backup.';
       case 'blocked':          return 'A blocker was detected — see Connect section for details.';

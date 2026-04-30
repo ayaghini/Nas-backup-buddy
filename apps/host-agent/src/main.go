@@ -105,6 +105,7 @@ func main() {
 		Lifecycle:     lc,
 		SFTPMgr:       sftpMgr,
 		OverlayStatus: ov,
+		TailscaleAddr: tailscaleAddr,
 		SFTPBind:      sftpBind,
 		SFTPPort:      sftpPort,
 		SFTPHost:      sftpHost,

@@ -163,6 +163,13 @@ export function getOverlayStatus(token: string, baseUrl = DEFAULT_BASE) {
   return apiFetch<HostAgentOverlayStatus>(baseUrl, '/overlay/status', token);
 }
 
+// Force the agent to re-read TAILSCALE_ADDRESS from its process environment and
+// recompute overlay status. In Docker, env vars are fixed at container creation —
+// this is only useful when the agent runs directly or after `docker compose up -d`.
+export function refreshOverlayStatus(token: string, baseUrl = DEFAULT_BASE) {
+  return apiFetch<HostAgentOverlayStatus>(baseUrl, '/overlay/refresh', token, { method: 'POST' });
+}
+
 export function getSftpStatus(token: string, baseUrl = DEFAULT_BASE) {
   return apiFetch<HostAgentSftpStatus>(baseUrl, '/sftp/status', token);
 }

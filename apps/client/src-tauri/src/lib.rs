@@ -3257,11 +3257,15 @@ fn host_agent_compose_down() -> Result<String, String> {
     run_compose(&dir, &["down"])
 }
 
-/// Restart the Docker Compose stack.
+/// Restart the Docker Compose stack, reloading .env changes.
+/// Uses `up -d --remove-orphans` instead of `restart` so that changes to the
+/// .env file (e.g. TAILSCALE_ADDRESS) are picked up by recreating the containers.
+/// `docker compose restart` keeps the original container environment; only `up -d`
+/// recreates containers with fresh env vars from the .env file.
 #[tauri::command]
 fn host_agent_compose_restart() -> Result<String, String> {
     let dir = resolve_host_agent_dir()?;
-    run_compose(&dir, &["restart"])
+    run_compose(&dir, &["up", "-d", "--remove-orphans"])
 }
 
 /// Fetch recent logs from both containers with redaction.

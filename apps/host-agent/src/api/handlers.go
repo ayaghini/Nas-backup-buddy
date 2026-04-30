@@ -183,7 +183,9 @@ func (s *Server) handleGenerateInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fp, _ := s.sftpMgr.GetHostKeyFingerprint()
-	b := bundle.Generate(alloc, s.cfg, s.overlayStatus, fp)
+	// Always refresh overlay before generating an invite so the bundle contains
+	// the most current TAILSCALE_ADDRESS, even if it changed since startup.
+	b := bundle.Generate(alloc, s.cfg, s.refreshOverlay(), fp)
 
 	now := time.Now().UTC()
 	alloc.InviteExpiresAt = now.AddDate(0, 0, 90).Format(time.RFC3339)
@@ -306,13 +308,31 @@ func (s *Server) handleRetire(w http.ResponseWriter, r *http.Request) {
 // ── Health / Overlay / SFTP Status / Storage ─────────────────────────────────
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	report := health.Get(s.manager, s.sftpMgr, s.overlayStatus, s.events,
+	report := health.Get(s.manager, s.sftpMgr, s.currentOverlay(), s.events,
 		s.cfg.StorageRoot, s.sftpHost, s.sftpPort)
 	writeJSON(w, http.StatusOK, report)
 }
 
 func (s *Server) handleOverlayStatus(w http.ResponseWriter, r *http.Request) {
-	ov := s.overlayStatus
+	ov := s.currentOverlay()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"provider":              ov.Provider,
+		"mode":                  ov.Mode,
+		"available":             ov.Available,
+		"hostAddress":           ov.HostAddress,
+		"sftpExpectedHost":      ov.SFTPExpectedHost,
+		"sftpPort":              ov.SFTPPort,
+		"publicExposureWarning": ov.PublicExposureWarning,
+	})
+}
+
+// handleRefreshOverlay re-reads TAILSCALE_ADDRESS from the process environment
+// and updates the stored overlay status. Useful when the agent is run directly
+// (not in Docker) and the environment changes at runtime. In Docker containers,
+// env vars are fixed at container creation — use `docker compose up -d` to apply
+// .env changes, which recreates the container with fresh env vars.
+func (s *Server) handleRefreshOverlay(w http.ResponseWriter, r *http.Request) {
+	ov := s.refreshOverlay()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"provider":              ov.Provider,
 		"mode":                  ov.Mode,
@@ -325,12 +345,13 @@ func (s *Server) handleOverlayStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSFTPStatus(w http.ResponseWriter, r *http.Request) {
+	ov := s.currentOverlay()
 	fp, _ := s.sftpMgr.GetHostKeyFingerprint()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"running":                  s.sftpRunning(),
 		"bindAddress":              s.sftpBind,
 		"port":                     s.sftpPort,
-		"publicExposureWarning":    s.overlayStatus.PublicExposureWarning,
+		"publicExposureWarning":    ov.PublicExposureWarning,
 		"hostKeyFingerprintSha256": fp,
 		"activeUserCount":          s.sftpMgr.ActiveUserCount(),
 	})

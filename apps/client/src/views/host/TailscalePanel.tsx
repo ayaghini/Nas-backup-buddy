@@ -16,7 +16,7 @@ import {
   hostAgentComposeRestart,
 } from '../../lib/tauri-bridge';
 import type { TailscaleDetail } from '../../lib/types';
-import { errorMessage, getOverlayStatus, getSftpStatus } from '../../lib/host-agent-api';
+import { errorMessage, getOverlayStatus, getSftpStatus, refreshOverlayStatus } from '../../lib/host-agent-api';
 
 interface Props {
   token: string;
@@ -107,11 +107,27 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
       await hostAgentWriteEnv(localEnv as HostEnvValues);
       onEnvChange(localEnv);
       if (restartNeeded) {
+        // `up -d --remove-orphans` recreates containers with fresh .env values.
+        // Wait longer than a simple restart since containers are being recreated.
         await hostAgentComposeRestart();
-        await new Promise(r => setTimeout(r, 2500));
+        await new Promise(r => setTimeout(r, 4500));
       }
       setRestartNeeded(false);
       await refreshAll();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function doRefreshOverlay() {
+    if (!token) return;
+    setBusy('refresh-overlay');
+    setError(null);
+    try {
+      const ov = await refreshOverlayStatus(token);
+      setOverlayStatus({ hostAddress: ov.hostAddress, sftpPort: ov.sftpPort });
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -243,8 +259,43 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
           </div>
         )}
         {overlayStatus && (
-          <div className="text-xs text-slate-400">
-            Agent overlay address: <span className="font-mono text-slate-300">{overlayStatus.hostAddress || '(not set)'}</span>
+          <div className="space-y-1.5">
+            <div className="text-xs text-slate-400">
+              Agent overlay address: <span className="font-mono text-slate-300">{overlayStatus.hostAddress || '(not set)'}</span>
+              {token && (
+                <button
+                  onClick={doRefreshOverlay}
+                  disabled={!!busy}
+                  className="ml-2 text-xs text-sky-400 hover:text-sky-300 underline disabled:opacity-50"
+                >
+                  Refresh
+                </button>
+              )}
+            </div>
+            {/* Mismatch: .env has TAILSCALE_ADDRESS but the running agent doesn't know it.
+                This happens when the container was started before the .env was updated.
+                Fix: "Save & Restart" uses `docker compose up -d` which recreates containers. */}
+            {localEnv.TAILSCALE_ADDRESS && !overlayStatus.hostAddress && (
+              <div className="px-2 py-1.5 rounded bg-amber-900/30 border border-amber-700/40 text-xs text-amber-300 flex items-start gap-1.5">
+                <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />
+                <span>
+                  TAILSCALE_ADDRESS is set in .env but the running agent has an empty overlay address.
+                  The container was started before this value was configured.
+                  Click <strong>Save &amp; Restart</strong> to recreate the container with the current .env.
+                </span>
+              </div>
+            )}
+            {localEnv.TAILSCALE_ADDRESS && overlayStatus.hostAddress &&
+              localEnv.TAILSCALE_ADDRESS !== overlayStatus.hostAddress && (
+              <div className="px-2 py-1.5 rounded bg-amber-900/20 border border-amber-700/30 text-xs text-amber-300 flex items-start gap-1.5">
+                <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />
+                <span>
+                  Agent address (<span className="font-mono">{overlayStatus.hostAddress}</span>) differs from .env
+                  (<span className="font-mono">{localEnv.TAILSCALE_ADDRESS}</span>).
+                  Click <strong>Save &amp; Restart</strong> to apply.
+                </span>
+              </div>
+            )}
           </div>
         )}
 
