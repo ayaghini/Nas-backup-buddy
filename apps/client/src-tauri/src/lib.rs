@@ -2772,7 +2772,8 @@ fn generate_owner_ssh_key(
         let _ = std::fs::set_permissions(&key_dir, std::fs::Permissions::from_mode(0o700));
     }
 
-    let key_path = key_dir.join(format!("{match_id}_ed25519"));
+    // RSA-3072: universally supported by all libssh2 versions (Ed25519 requires >= 1.9.0).
+    let key_path = key_dir.join(format!("{match_id}_rsa"));
     let pub_path = key_path.with_extension("pub");
     let already_existed = key_path.exists() && pub_path.exists();
 
@@ -2780,12 +2781,10 @@ fn generate_owner_ssh_key(
         let ssh_keygen = find_ssh_keygen();
         let status = std::process::Command::new(&ssh_keygen)
             .args([
-                "-t",
-                "ed25519",
-                "-N",
-                "",
-                "-C",
-                &format!("nasbb-{match_id}"),
+                "-t", "rsa",
+                "-b", "3072",
+                "-N", "",
+                "-C", &format!("nasbb-{match_id}"),
                 "-f",
             ])
             .arg(&key_path)
