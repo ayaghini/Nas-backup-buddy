@@ -562,36 +562,6 @@ export interface TailscaleConnectResult {
   message: string;
 }
 
-/** Current Tailscale Funnel state for this machine. */
-export interface FunnelStatus {
-  enabled: boolean;
-  /** MagicDNS hostname (e.g. my-mac.tailnet.ts.net). Null when funnel is off. */
-  public_hostname: string | null;
-  /** The local port being forwarded (e.g. 2222). */
-  local_port: number | null;
-  /** The public Funnel port (always 443). */
-  public_port: number;
-  /** Tailnet has not activated Funnel — user must visit activation_url. */
-  needs_activation: boolean;
-  activation_url: string | null;
-  message: string;
-}
-
-/** Result of enabling Tailscale Funnel. */
-export interface FunnelEnableResult {
-  success: boolean;
-  needs_activation: boolean;
-  activation_url: string | null;
-  public_hostname: string | null;
-  message: string;
-}
-
-/** Result of disabling Tailscale Funnel. */
-export interface FunnelDisableResult {
-  success: boolean;
-  message: string;
-}
-
 // ── Owner Connection Bundle ───────────────────────────────────────────────────
 
 /** Parsed Owner Connection Bundle — non-secret fields imported by the data owner. */

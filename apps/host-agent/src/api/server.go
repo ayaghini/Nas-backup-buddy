@@ -27,7 +27,6 @@ type Server struct {
 	tailscaleAddrEnv string // value of TAILSCALE_ADDRESS at startup (re-read on refresh)
 	sftpBind         string
 	sftpPort         int
-	sftpPublicPort   int // port embedded in invite bundles; equals sftpPort unless Funnel is active
 	sftpHost         string
 	startedAt        time.Time
 }
@@ -44,7 +43,6 @@ type Options struct {
 	TailscaleAddr    string
 	SFTPBind         string
 	SFTPPort         int
-	SFTPPublicPort   int // port embedded in invite bundles; 0 means same as SFTPPort
 	SFTPHost         string
 }
 
@@ -61,7 +59,6 @@ func New(opts Options) *Server {
 		tailscaleAddrEnv: opts.TailscaleAddr,
 		sftpBind:         opts.SFTPBind,
 		sftpPort:         opts.SFTPPort,
-		sftpPublicPort:   opts.SFTPPublicPort,
 		sftpHost:         opts.SFTPHost,
 		startedAt:        time.Now().UTC(),
 	}
@@ -80,7 +77,7 @@ func (s *Server) currentOverlay() overlay.Status {
 // `docker compose up -d` (which picks up .env changes) or for direct non-Docker runs.
 func (s *Server) refreshOverlay() overlay.Status {
 	freshAddr := os.Getenv("TAILSCALE_ADDRESS")
-	newOv := overlay.GetStatus(freshAddr, s.sftpBind, s.sftpPort, s.sftpPublicPort)
+	newOv := overlay.GetStatus(freshAddr, s.sftpBind, s.sftpPort)
 	s.overlayMu.Lock()
 	s.overlayStatus = newOv
 	s.overlayMu.Unlock()

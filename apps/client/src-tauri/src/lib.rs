@@ -15,15 +15,11 @@ use nasbb_core::host_setup::{
 use nasbb_core::overlay::{
     compatibility_matrix, detect_overlay_tools,
     get_tailscale_detail as core_get_tailscale_detail,
-    get_funnel_status as core_get_funnel_status,
-    enable_funnel as core_enable_funnel,
-    disable_funnel as core_disable_funnel,
     headscale_setup_guide,
     overlay_verify_steps, tailscale_setup_guide, wireguard_setup_guide,
     CompatibilityEntry, OverlayConfig, OverlayDetectionResult,
     OverlayProvider, OverlayVerifyStep, TailscaleConnectResult, TailscaleDetail,
     TailscalePingResult, validate_overlay_config,
-    FunnelStatus, FunnelEnableResult, FunnelDisableResult,
 };
 use nasbb_core::health::{HealthLevel, HealthReport, RestoreDrillResult};
 use nasbb_core::integration::{
@@ -2682,34 +2678,6 @@ fn tailscale_connect() -> TailscaleConnectResult {
     nasbb_core::overlay::tailscale_connect()
 }
 
-/// Query the current Tailscale Funnel status (read-only, no side effects).
-///
-/// Returns whether a TCP funnel is active on port 443 and what local port it
-/// forwards to. Also detects whether Funnel needs to be activated for the tailnet.
-#[tauri::command]
-fn tailscale_funnel_status() -> FunnelStatus {
-    core_get_funnel_status()
-}
-
-/// Enable Tailscale Funnel for TCP on port 443 forwarding to `local_port`.
-///
-/// Runs `tailscale funnel --bg --tcp=443 localhost:<local_port>`.
-/// Must only be called from a confirmed user action. Never run automatically.
-/// After enabling, set NASBB_SFTP_PUBLIC_PORT=443 in the host env.
-#[tauri::command]
-fn tailscale_funnel_enable(local_port: u16) -> FunnelEnableResult {
-    core_enable_funnel(local_port)
-}
-
-/// Disable Tailscale Funnel by running `tailscale funnel reset`.
-///
-/// Must only be called from a confirmed user action.
-/// After disabling, remove or reset NASBB_SFTP_PUBLIC_PORT in the host env.
-#[tauri::command]
-fn tailscale_funnel_disable() -> FunnelDisableResult {
-    core_disable_funnel()
-}
-
 // ── Owner bundle parsing ─────────────────────────────────────────────────────
 
 /// Parse an Owner Connection Bundle pasted by the data owner into Peer Storage.
@@ -3623,9 +3591,6 @@ pub fn run() {
             get_tailscale_detail,
             tailscale_ping_peer,
             tailscale_connect,
-            tailscale_funnel_status,
-            tailscale_funnel_enable,
-            tailscale_funnel_disable,
             // Owner bundle and SFTP verification
             parse_owner_bundle,
             generate_owner_ssh_key,

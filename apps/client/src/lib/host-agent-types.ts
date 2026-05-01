@@ -222,8 +222,6 @@ export interface HostEnvValues {
   NASBB_SFTP_PORT: string;
   NASBB_SFTP_BIND: string;
   TAILSCALE_ADDRESS: string;
-  /** Port embedded in invite bundles. Set to 443 when Tailscale Funnel is active. */
-  NASBB_SFTP_PUBLIC_PORT: string;
 }
 
 export interface ComposeServiceStatus {
