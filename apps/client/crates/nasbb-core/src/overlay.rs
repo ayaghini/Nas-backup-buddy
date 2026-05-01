@@ -1334,6 +1334,45 @@ pub struct FunnelDisableResult {
     pub message: String,
 }
 
+/// Run a Tailscale CLI command with a hard timeout.
+///
+/// Spawns the process in a thread and waits on a channel with `timeout_secs`.
+/// Returns the combined stdout+stderr on success, or a timeout/spawn error string.
+/// The spawned process is orphaned on timeout (acceptable for short CLI commands).
+fn run_tailscale_cmd(bin: &str, args: Vec<String>, timeout_secs: u64) -> Result<(String, bool), String> {
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    let bin_owned = bin.to_string();
+    let (tx, rx) = mpsc::channel::<std::io::Result<std::process::Output>>();
+
+    thread::spawn(move || {
+        let result = std::process::Command::new(&bin_owned)
+            .args(&args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output();
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(Duration::from_secs(timeout_secs)) {
+        Ok(Ok(out)) => {
+            let text = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            Ok((text, out.status.success()))
+        }
+        Ok(Err(e)) => Err(format!("Failed to run tailscale: {e}")),
+        Err(_) => Err(format!(
+            "Tailscale CLI did not respond within {timeout_secs}s — \
+             check that the Tailscale daemon is running and try again"
+        )),
+    }
+}
+
 /// Query the current Tailscale Funnel status by running `tailscale funnel status`.
 pub fn get_funnel_status() -> FunnelStatus {
     let bin = match find_tailscale_binary() {
@@ -1345,26 +1384,14 @@ pub fn get_funnel_status() -> FunnelStatus {
             message: "Tailscale CLI not found — install Tailscale first.".to_string(),
         },
     };
-    match std::process::Command::new(&bin)
-        .args(["funnel", "status"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-    {
-        Err(_) => FunnelStatus {
+    match run_tailscale_cmd(&bin, vec!["funnel".into(), "status".into()], 10) {
+        Err(e) => FunnelStatus {
             enabled: false, public_hostname: None, local_port: None,
             public_port: FUNNEL_TCP_PUBLIC_PORT, needs_activation: false,
             activation_url: None,
-            message: "Failed to run tailscale funnel status.".to_string(),
+            message: e,
         },
-        Ok(out) => {
-            let text = format!(
-                "{}\n{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            parse_funnel_status_output(&text)
-        }
+        Ok((text, _)) => parse_funnel_status_output(&text),
     }
 }
 
@@ -1384,25 +1411,19 @@ pub fn enable_funnel(local_port: u16) -> FunnelEnableResult {
         },
     };
     let local_target = format!("localhost:{local_port}");
-    match std::process::Command::new(&bin)
-        .args(["funnel", "--bg", "--tcp=443", &local_target])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-    {
-        Err(_) => FunnelEnableResult {
+    let args = vec![
+        "funnel".to_string(),
+        "--bg".to_string(),
+        "--tcp=443".to_string(),
+        local_target,
+    ];
+    match run_tailscale_cmd(&bin, args, 15) {
+        Err(e) => FunnelEnableResult {
             success: false, needs_activation: false, activation_url: None,
             public_hostname: None,
-            message: "Failed to run tailscale funnel command.".to_string(),
+            message: e,
         },
-        Ok(out) => {
-            let text = format!(
-                "{}\n{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            parse_funnel_enable_output(&text, out.status.success())
-        }
+        Ok((text, exit_ok)) => parse_funnel_enable_output(&text, exit_ok),
     }
 }
 
@@ -1417,29 +1438,16 @@ pub fn disable_funnel() -> FunnelDisableResult {
             message: "Tailscale CLI not found — install Tailscale first.".to_string(),
         },
     };
-    match std::process::Command::new(&bin)
-        .args(["funnel", "reset"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-    {
-        Err(_) => FunnelDisableResult {
-            success: false,
-            message: "Failed to run tailscale funnel reset.".to_string(),
+    match run_tailscale_cmd(&bin, vec!["funnel".into(), "reset".into()], 15) {
+        Err(e) => FunnelDisableResult { success: false, message: e },
+        Ok((_, true)) => FunnelDisableResult {
+            success: true,
+            message: "Funnel disabled — SFTP is no longer publicly accessible via Funnel.".to_string(),
         },
-        Ok(out) => {
-            if out.status.success() {
-                FunnelDisableResult {
-                    success: true,
-                    message: "Funnel disabled — SFTP is no longer publicly accessible via Funnel.".to_string(),
-                }
-            } else {
-                FunnelDisableResult {
-                    success: false,
-                    message: "tailscale funnel reset failed — check Tailscale status.".to_string(),
-                }
-            }
-        }
+        Ok((_, false)) => FunnelDisableResult {
+            success: false,
+            message: "tailscale funnel reset failed — check Tailscale status.".to_string(),
+        },
     }
 }
 
