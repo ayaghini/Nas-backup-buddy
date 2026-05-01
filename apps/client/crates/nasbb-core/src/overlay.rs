@@ -1367,8 +1367,9 @@ fn run_tailscale_cmd(bin: &str, args: Vec<String>, timeout_secs: u64) -> Result<
         }
         Ok(Err(e)) => Err(format!("Failed to run tailscale: {e}")),
         Err(_) => Err(format!(
-            "Tailscale CLI did not respond within {timeout_secs}s — \
-             check that the Tailscale daemon is running and try again"
+            "TIMEOUT: Tailscale CLI did not respond within {timeout_secs}s — \
+             the daemon may be unavailable or this CLI version may not support \
+             background funnel. Try running the command manually in a terminal."
         )),
     }
 }
@@ -1384,7 +1385,7 @@ pub fn get_funnel_status() -> FunnelStatus {
             message: "Tailscale CLI not found — install Tailscale first.".to_string(),
         },
     };
-    match run_tailscale_cmd(&bin, vec!["funnel".into(), "status".into()], 10) {
+    match run_tailscale_cmd(&bin, vec!["funnel".into(), "status".into()], 4) {
         Err(e) => FunnelStatus {
             enabled: false, public_hostname: None, local_port: None,
             public_port: FUNNEL_TCP_PUBLIC_PORT, needs_activation: false,

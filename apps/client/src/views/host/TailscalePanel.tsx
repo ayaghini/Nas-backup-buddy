@@ -44,6 +44,7 @@ function ReachabilityBadge({ cls }: { cls: ReturnType<typeof classifyReachabilit
 export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
   const [tsDetail, setTsDetail] = useState<TailscaleDetail | null>(null);
   const [funnelStatus, setFunnelStatus] = useState<FunnelStatus | null>(null);
+  const [funnelCliUnavailable, setFunnelCliUnavailable] = useState(false);
   const [overlayStatus, setOverlayStatus] = useState<{ hostAddress: string; sftpPort: number } | null>(null);
   const [sftpStatus, setSftpStatus] = useState<{ bindAddress: string; running: boolean; publicExposureWarning: boolean } | null>(null);
   const [localEnv, setLocalEnv] = useState<Partial<HostEnvValues>>(env);
@@ -59,13 +60,19 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
     setBusy('refresh');
     setError(null);
     try {
+      // Skip funnel status on refresh if the CLI previously timed out — avoids
+      // adding a 4-second stall to every refresh for users whose daemon is unavailable.
+      const funnelPromise = funnelCliUnavailable ? Promise.resolve(null) : tailscaleFunnelStatus();
       const [ts, freshEnv, funnel] = await Promise.all([
         getTailscaleDetail(),
         hostAgentReadEnv(),
-        tailscaleFunnelStatus(),
+        funnelPromise,
       ]);
       setTsDetail(ts);
-      setFunnelStatus(funnel);
+      if (funnel !== null) {
+        setFunnelStatus(funnel);
+        if (funnel.message.startsWith('TIMEOUT:')) setFunnelCliUnavailable(true);
+      }
       setLocalEnv(freshEnv);
       onEnvChange(freshEnv);
 
@@ -96,16 +103,22 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
     setError(null);
     try {
       const result = await tailscaleFunnelEnable(localPort);
-      if (result.success) {
+      if (result.message.startsWith('TIMEOUT:')) {
+        setFunnelCliUnavailable(true);
+        setFunnelStatus(prev => prev ? { ...prev, message: result.message } : null);
+      } else if (result.success) {
         // Auto-configure env: public port 443, advertised address = MagicDNS hostname
         const updates: Partial<HostEnvValues> = { NASBB_SFTP_PUBLIC_PORT: '443' };
         if (result.public_hostname) updates.TAILSCALE_ADDRESS = result.public_hostname;
         setLocalEnv(v => ({ ...v, ...updates }));
         setRestartNeeded(true);
+        const fs = await tailscaleFunnelStatus();
+        setFunnelStatus(fs);
+      } else {
+        const fs = await tailscaleFunnelStatus();
+        setFunnelStatus(fs);
+        setError(result.message);
       }
-      const fs = await tailscaleFunnelStatus();
-      setFunnelStatus(fs);
-      if (!result.success) setError(result.message);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -267,61 +280,83 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
         {appMode === 'browser' && (
           <div className="text-xs text-amber-400">Funnel control not available in browser mode.</div>
         )}
-        {funnelStatus && appMode === 'tauri' && (
+        {appMode === 'tauri' && (funnelStatus || funnelCliUnavailable) && (
           <div className="space-y-2">
-            {funnelStatus.needs_activation && (
-              <div className="px-2 py-2 rounded bg-amber-900/30 border border-amber-700/40 text-xs text-amber-300 space-y-1">
-                <div className="flex items-center gap-1.5 font-medium">
-                  <AlertTriangle size={11} /> Funnel not activated for this tailnet
+            {/* CLI unavailable — show manual setup instructions */}
+            {funnelCliUnavailable && (
+              <div className="px-2 py-2 rounded bg-slate-800 border border-slate-700 text-xs space-y-2">
+                <div className="flex items-center gap-1.5 text-amber-300 font-medium">
+                  <AlertTriangle size={11} /> Funnel CLI unavailable — set up manually
                 </div>
-                <div>Visit your Tailscale admin console to enable Funnel, then try again.</div>
-                {funnelStatus.activation_url && (
-                  <a
-                    href={funnelStatus.activation_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-1 text-sky-400 hover:text-sky-300 underline"
-                  >
-                    <ExternalLink size={10} /> Activate Funnel
-                  </a>
-                )}
-              </div>
-            )}
-            {funnelStatus.enabled ? (
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1.5 text-xs text-emerald-400">
-                  <Wifi size={11} /> Funnel active — port 443 → localhost:{funnelStatus.local_port ?? '?'}
+                <div className="text-slate-400 space-y-1">
+                  <div>The app cannot reach the Tailscale daemon (socket permission or CLI version issue). Run this in a terminal instead:</div>
+                  <pre className="bg-slate-900 rounded px-2 py-1.5 text-slate-200 overflow-x-auto select-all">
+{`tailscale funnel --bg --tcp=443 localhost:${localEnv.NASBB_SFTP_PORT ?? '2222'}`}
+                  </pre>
+                  <div>Then set these env values below and click <strong>Save &amp; Restart stack</strong>:</div>
+                  <pre className="bg-slate-900 rounded px-2 py-1.5 text-slate-200 overflow-x-auto select-all">
+{`TAILSCALE_ADDRESS=<your MagicDNS hostname, e.g. hostname.tail1234.ts.net>
+NASBB_SFTP_PUBLIC_PORT=443`}
+                  </pre>
+                  <div className="text-slate-500">Check funnel status any time: <code className="text-slate-400">tailscale funnel status</code></div>
                 </div>
-                {funnelStatus.public_hostname && (
-                  <div className="text-xs text-slate-400">
-                    Public host: <span className="font-mono text-slate-300">{funnelStatus.public_hostname}:443</span>
-                    <span className="text-slate-500 ml-1">(embed in invites)</span>
-                  </div>
-                )}
                 <button
-                  onClick={doDisableFunnel}
-                  disabled={!!busy}
-                  className="px-3 py-1.5 rounded bg-red-800/60 hover:bg-red-700/60 text-xs text-red-200 disabled:opacity-50 flex items-center gap-1.5"
+                  onClick={async () => { setFunnelCliUnavailable(false); const fs = await tailscaleFunnelStatus(); setFunnelStatus(fs); if (fs.message.startsWith('TIMEOUT:')) setFunnelCliUnavailable(true); }}
+                  className="text-xs text-sky-400 hover:text-sky-300 underline"
                 >
-                  {busy === 'funnel-disable' ? <Loader2 size={11} className="animate-spin" /> : null}
-                  Disable Funnel
+                  Retry auto-detect
                 </button>
               </div>
-            ) : (
-              <div className="space-y-1.5">
-                <div className="text-xs text-slate-500">{funnelStatus.message}</div>
-                {!funnelStatus.needs_activation && (
-                  <button
-                    onClick={doEnableFunnel}
-                    disabled={!!busy || !tsDetail?.connected}
-                    className="px-3 py-1.5 rounded bg-sky-700 hover:bg-sky-600 text-xs text-white disabled:opacity-50 flex items-center gap-1.5"
-                    title={!tsDetail?.connected ? 'Connect Tailscale first' : undefined}
-                  >
-                    {busy === 'funnel-enable' ? <Loader2 size={11} className="animate-spin" /> : null}
-                    Enable Funnel (TCP 443)
-                  </button>
+            )}
+
+            {/* Normal status display when CLI is reachable */}
+            {!funnelCliUnavailable && funnelStatus && (
+              <>
+                {funnelStatus.needs_activation && (
+                  <div className="px-2 py-2 rounded bg-amber-900/30 border border-amber-700/40 text-xs text-amber-300 space-y-1">
+                    <div className="flex items-center gap-1.5 font-medium">
+                      <AlertTriangle size={11} /> Funnel not activated for this tailnet
+                    </div>
+                    <div>Visit your Tailscale admin console to enable Funnel, then try again.</div>
+                    {funnelStatus.activation_url && (
+                      <a href={funnelStatus.activation_url} target="_blank" rel="noreferrer"
+                        className="flex items-center gap-1 text-sky-400 hover:text-sky-300 underline">
+                        <ExternalLink size={10} /> Activate Funnel
+                      </a>
+                    )}
+                  </div>
                 )}
-              </div>
+                {funnelStatus.enabled ? (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-xs text-emerald-400">
+                      <Wifi size={11} /> Funnel active — port 443 → localhost:{funnelStatus.local_port ?? '?'}
+                    </div>
+                    {funnelStatus.public_hostname && (
+                      <div className="text-xs text-slate-400">
+                        Public host: <span className="font-mono text-slate-300">{funnelStatus.public_hostname}:443</span>
+                        <span className="text-slate-500 ml-1">(embed in invites)</span>
+                      </div>
+                    )}
+                    <button onClick={doDisableFunnel} disabled={!!busy}
+                      className="px-3 py-1.5 rounded bg-red-800/60 hover:bg-red-700/60 text-xs text-red-200 disabled:opacity-50 flex items-center gap-1.5">
+                      {busy === 'funnel-disable' ? <Loader2 size={11} className="animate-spin" /> : null}
+                      Disable Funnel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <div className="text-xs text-slate-500">{funnelStatus.message}</div>
+                    {!funnelStatus.needs_activation && (
+                      <button onClick={doEnableFunnel} disabled={!!busy || !tsDetail?.connected}
+                        className="px-3 py-1.5 rounded bg-sky-700 hover:bg-sky-600 text-xs text-white disabled:opacity-50 flex items-center gap-1.5"
+                        title={!tsDetail?.connected ? 'Connect Tailscale first' : undefined}>
+                        {busy === 'funnel-enable' ? <Loader2 size={11} className="animate-spin" /> : null}
+                        Enable Funnel (TCP 443)
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
