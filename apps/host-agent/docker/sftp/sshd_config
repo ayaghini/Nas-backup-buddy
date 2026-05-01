@@ -10,6 +10,8 @@ StrictModes no
 X11Forwarding no
 AllowTcpForwarding no
 PrintMotd no
+# libssh2 < 1.9.0 only supports RSA-SHA1 for user auth; re-enable it for compatibility.
+PubkeyAcceptedAlgorithms +ssh-rsa
 Subsystem sftp internal-sftp
 AuthorizedKeysFile /state/users/%u/authorized_keys
 Match Group nasbb
