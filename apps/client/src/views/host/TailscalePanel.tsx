@@ -173,7 +173,7 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
                   </div>
                 ))}
                 <div className="text-xs text-slate-500">
-                  For cross-account Tailscale sharing, advertise the shared 100.x IP; MagicDNS may not resolve for the owner.
+                  For cross-account access: use the 100.x IPv4 (not MagicDNS) — peer's Tailscale client may not resolve your DNS name.
                 </div>
               </div>
             )}
@@ -202,6 +202,23 @@ export function TailscalePanel({ token, env, onEnvChange, appMode }: Props) {
         ) : (
           <div className="text-xs text-slate-500">Not checked yet.</div>
         )}
+      </div>
+
+      {/* Cross-account sharing instructions */}
+      <div className="bg-slate-900 rounded border border-slate-800 p-3 space-y-1.5">
+        <div className="text-xs font-medium text-slate-300">How to share with a peer on a different Tailscale account</div>
+        <ol className="text-xs text-slate-400 space-y-1 list-decimal list-inside">
+          <li>Open <span className="font-mono text-slate-300">login.tailscale.com → Machines → <em>this device</em> → Share</span></li>
+          <li>Enter your peer's Tailscale email and send the invitation</li>
+          <li>Your peer accepts — they can now reach your 100.x address</li>
+          <li>Below, click <strong className="text-slate-300">Use for SFTP bind</strong> on your Tailscale IPv4 (100.x)</li>
+          <li>Click <strong className="text-slate-300">Advertise this IP</strong> on the same IPv4</li>
+          <li>Click <strong className="text-slate-300">Save &amp; Restart stack</strong></li>
+          <li>Go to Allocations → generate an invite — it will include the 100.x SFTP address</li>
+        </ol>
+        <div className="text-xs text-slate-500 pt-0.5">
+          MagicDNS hostnames are only resolvable within a single tailnet; always use the raw 100.x IP for cross-account invites.
+        </div>
       </div>
 
       {/* Env editor */}
