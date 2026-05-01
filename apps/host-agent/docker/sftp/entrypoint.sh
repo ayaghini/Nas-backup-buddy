@@ -32,6 +32,10 @@ setup_users() {
     if ! id "$USERNAME" &>/dev/null; then
       adduser -D -H -G nasbb -s /sbin/nologin "$USERNAME"
     fi
+    # Alpine's adduser -D sets shadow password to '!' (locked).
+    # OpenSSH refuses pubkey auth for locked accounts even without PAM.
+    # Set to '*' (disabled login, not locked) so pubkey auth works.
+    usermod -p '*' "$USERNAME"
 
     mkdir -p "$REPOS_DIR/$USERNAME"
     chown root:root "$REPOS_DIR/$USERNAME"
