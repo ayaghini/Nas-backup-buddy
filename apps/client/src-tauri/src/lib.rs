@@ -2772,9 +2772,25 @@ fn generate_owner_ssh_key(
         let _ = std::fs::set_permissions(&key_dir, std::fs::Permissions::from_mode(0o700));
     }
 
-    // RSA-3072: universally supported by all libssh2 versions (Ed25519 requires >= 1.9.0).
+    // RSA-3072 in PEM/PKCS#1 format: libssh2 reads PEM reliably across all platforms.
+    // Modern ssh-keygen defaults to OpenSSH format for RSA keys; -m PEM forces PKCS#1.
     let key_path = key_dir.join(format!("{match_id}_rsa"));
     let pub_path = key_path.with_extension("pub");
+
+    // If an existing key is in OpenSSH format, convert it to PEM in-place.
+    // This preserves the key material so authorized_keys on the host stays valid.
+    if key_path.exists() && pub_path.exists() {
+        let is_openssh_format = std::fs::read_to_string(&key_path)
+            .map(|s| s.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"))
+            .unwrap_or(false);
+        if is_openssh_format {
+            let _ = std::process::Command::new(find_ssh_keygen())
+                .args(["-p", "-m", "PEM", "-N", "", "-P", "", "-f"])
+                .arg(&key_path)
+                .status();
+        }
+    }
+
     let already_existed = key_path.exists() && pub_path.exists();
 
     if !already_existed {
@@ -2783,6 +2799,7 @@ fn generate_owner_ssh_key(
             .args([
                 "-t", "rsa",
                 "-b", "3072",
+                "-m", "PEM",
                 "-N", "",
                 "-C", &format!("nasbb-{match_id}"),
                 "-f",
