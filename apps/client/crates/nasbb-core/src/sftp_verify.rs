@@ -31,7 +31,7 @@
 //! - Linux: `sudo apt install libssh2-1-dev` / `sudo yum install libssh2-devel`.
 //! - Windows: available via the OpenSSH optional feature or Git for Windows.
 
-use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::engine::general_purpose::STANDARD_NO_PAD as BASE64;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use ssh2::{HashType, Session};
@@ -329,7 +329,7 @@ fn check_fingerprint_tofu(
     let known = load_known_hosts(path);
     match known.get(&key) {
         None => FingerprintStatus::New,
-        Some(entry) if entry.fingerprint == fp => FingerprintStatus::Matching,
+        Some(entry) if entry.fingerprint.trim_end_matches('=') == fp.trim_end_matches('=') => FingerprintStatus::Matching,
         Some(_) => FingerprintStatus::Changed,
     }
 }

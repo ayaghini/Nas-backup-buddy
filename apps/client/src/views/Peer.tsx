@@ -921,11 +921,6 @@ export function Peer() {
                       Ask the host to import the Owner Access Response in Host → Allocations, then retry.
                     </p>
                   )}
-                  {sftpResult?.status === 'host_key_mismatch' && (
-                    <p className="text-xs text-red-400">
-                      Host key mismatch — verify the fingerprint out-of-band with your host before proceeding.
-                    </p>
-                  )}
                   {sftpResult?.free_bytes != null && (
                     <p className="text-xs text-slate-500">Remote free space: {formatBytes(sftpResult.free_bytes)}</p>
                   )}
