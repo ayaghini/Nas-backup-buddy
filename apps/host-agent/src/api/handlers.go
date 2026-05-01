@@ -183,9 +183,14 @@ func (s *Server) handleGenerateInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fp, _ := s.sftpMgr.GetHostKeyFingerprint()
+	rsaFp, _ := s.sftpMgr.GetRSAHostKeyFingerprint()
 	// Always refresh overlay before generating an invite so the bundle contains
 	// the most current TAILSCALE_ADDRESS, even if it changed since startup.
-	b := bundle.Generate(alloc, s.cfg, s.refreshOverlay(), fp)
+	altFps := []string{}
+	if rsaFp != "" && rsaFp != fp {
+		altFps = append(altFps, rsaFp)
+	}
+	b := bundle.Generate(alloc, s.cfg, s.refreshOverlay(), fp, altFps...)
 
 	now := time.Now().UTC()
 	alloc.InviteExpiresAt = now.AddDate(0, 0, 90).Format(time.RFC3339)

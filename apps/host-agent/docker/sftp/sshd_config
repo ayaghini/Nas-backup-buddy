@@ -1,9 +1,10 @@
 Port 2222
 ListenAddress 0.0.0.0
 HostKey /state/sftp-host-keys/ssh_host_ed25519_key
+HostKey /state/sftp-host-keys/ssh_host_rsa_key
 PermitRootLogin no
 PasswordAuthentication no
-ChallengeResponseAuthentication no
+KbdInteractiveAuthentication no
 UsePAM no
 StrictModes no
 X11Forwarding no

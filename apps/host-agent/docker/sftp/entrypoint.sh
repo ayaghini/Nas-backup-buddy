@@ -7,10 +7,18 @@ REPOS_DIR="${REPOS_DIR:-/repos}"
 mkdir -p "$STATE_DIR/sftp-host-keys"
 if [ ! -f "$STATE_DIR/sftp-host-keys/ssh_host_ed25519_key" ]; then
   ssh-keygen -t ed25519 -f "$STATE_DIR/sftp-host-keys/ssh_host_ed25519_key" -N "" -q
-  echo "[nasbb-sftp] Host key generated."
+  echo "[nasbb-sftp] Ed25519 host key generated."
 fi
 chmod 600 "$STATE_DIR/sftp-host-keys/ssh_host_ed25519_key"
 chmod 644 "$STATE_DIR/sftp-host-keys/ssh_host_ed25519_key.pub"
+
+# RSA fallback key — needed for libssh2 < 1.9.0 which lacks Ed25519 support.
+if [ ! -f "$STATE_DIR/sftp-host-keys/ssh_host_rsa_key" ]; then
+  ssh-keygen -t rsa -b 4096 -f "$STATE_DIR/sftp-host-keys/ssh_host_rsa_key" -N "" -q
+  echo "[nasbb-sftp] RSA host key generated."
+fi
+chmod 600 "$STATE_DIR/sftp-host-keys/ssh_host_rsa_key"
+chmod 644 "$STATE_DIR/sftp-host-keys/ssh_host_rsa_key.pub"
 
 setup_users() {
   for user_dir in "$STATE_DIR/users"/*/; do

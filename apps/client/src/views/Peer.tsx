@@ -480,15 +480,20 @@ export function Peer() {
         privateKeyRef || null,
       );
 
-      // Compare actual server fingerprint against what the invite advertised.
+      // Compare actual server fingerprint against all fingerprints in the invite.
+      // The invite includes the primary (Ed25519) and optionally an RSA fallback.
       // Normalize by stripping the 'SHA256:' prefix — Go and Rust both emit the full form.
-      const inviteFp = invite.hostKey?.fingerprintSha256?.replace(/^SHA256:/i, '') ?? null;
-      const actualFp = result.host_fingerprint?.replace(/^SHA256:/i, '') ?? null;
-      if (inviteFp && actualFp && inviteFp !== actualFp) {
+      const strip = (fp: string) => fp.replace(/^SHA256:/i, '');
+      const inviteFps = [
+        invite.hostKey?.fingerprintSha256,
+        ...(invite.hostKey?.alternateFingerprints ?? []),
+      ].filter(Boolean).map(fp => strip(fp!));
+      const actualFp = result.host_fingerprint ? strip(result.host_fingerprint) : null;
+      if (inviteFps.length > 0 && actualFp && !inviteFps.includes(actualFp)) {
         const mismatchResult: SftpVerifyResult = {
           ...result,
           status: 'host_key_mismatch',
-          message: `Host key mismatch — expected ${invite.hostKey!.fingerprintSha256}, got ${result.host_fingerprint}.`,
+          message: `Host key mismatch — got ${result.host_fingerprint}, expected one of: ${inviteFps.join(', ')}.`,
         };
         setSftpResult(mismatchResult);
         void savePeerState({ lastSftpStatus: 'host_key_mismatch' });

@@ -41,8 +41,9 @@ type inviteQuota struct {
 }
 
 type inviteHostKey struct {
-	FingerprintSHA256 string `json:"fingerprintSha256"`
-	VerificationNote  string `json:"verificationNote"`
+	FingerprintSHA256     string   `json:"fingerprintSha256"`
+	AlternateFingerprints []string `json:"alternateFingerprints,omitempty"`
+	VerificationNote      string   `json:"verificationNote"`
 }
 
 // sftpHostForInvite returns the best available SFTP host for the invite bundle.
@@ -62,7 +63,7 @@ func sftpHostForInvite(ov overlay.Status, sftpBind string) string {
 	return "127.0.0.1"
 }
 
-func Generate(alloc *allocation.Allocation, cfg *config.Config, ov overlay.Status, fingerprint string) HostInviteBundle {
+func Generate(alloc *allocation.Allocation, cfg *config.Config, ov overlay.Status, fingerprint string, altFingerprints ...string) HostInviteBundle {
 	expiresAt := time.Now().UTC().AddDate(0, 0, 90).Format(time.RFC3339)
 
 	sftpHost := sftpHostForInvite(ov, cfg.SFTPBindAddress)
@@ -95,8 +96,9 @@ func Generate(alloc *allocation.Allocation, cfg *config.Config, ov overlay.Statu
 			QuotaMode:  alloc.QuotaMode,
 		},
 		HostKey: inviteHostKey{
-			FingerprintSHA256: fingerprint,
-			VerificationNote:  "Verify out-of-band before trusting the first connection.",
+			FingerprintSHA256:     fingerprint,
+			AlternateFingerprints: altFingerprints,
+			VerificationNote:      "Verify out-of-band before trusting the first connection.",
 		},
 		ExpiresAt: expiresAt,
 	}

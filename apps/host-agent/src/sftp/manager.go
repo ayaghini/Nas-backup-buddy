@@ -89,7 +89,15 @@ func (m *Manager) TriggerReload() error {
 }
 
 func (m *Manager) GetHostKeyFingerprint() (string, error) {
-	pubKeyPath := filepath.Join(m.stateDir, "sftp-host-keys", "ssh_host_ed25519_key.pub")
+	return m.readKeyFingerprint("ssh_host_ed25519_key.pub")
+}
+
+func (m *Manager) GetRSAHostKeyFingerprint() (string, error) {
+	return m.readKeyFingerprint("ssh_host_rsa_key.pub")
+}
+
+func (m *Manager) readKeyFingerprint(filename string) (string, error) {
+	pubKeyPath := filepath.Join(m.stateDir, "sftp-host-keys", filename)
 	data, err := os.ReadFile(pubKeyPath)
 	if os.IsNotExist(err) {
 		return "", nil

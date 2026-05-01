@@ -153,6 +153,7 @@ export interface HostAgentInviteBundle {
   };
   hostKey: {
     fingerprintSha256: string;
+    alternateFingerprints?: string[];
     verificationNote: string;
   };
   expiresAt: string;

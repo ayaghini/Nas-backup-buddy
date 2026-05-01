@@ -136,9 +136,9 @@ pub fn verify_sftp_target(
         Err(_) => return err_result(SftpVerifyStatus::Error, "Failed to create SSH session"),
     };
     session.set_tcp_stream(tcp);
-    if let Err(_) = session.handshake() {
+    if let Err(e) = session.handshake() {
         return err_result(SftpVerifyStatus::Unreachable,
-            "SSH handshake failed — check overlay network and SSH daemon on the host");
+            &format!("SSH handshake failed — {} (check overlay network and SSH daemon on host)", e));
     }
 
     // ── Step 3: Fingerprint capture and TOFU check ────────────────────────────
