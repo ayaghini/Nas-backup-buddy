@@ -2746,7 +2746,66 @@ fn safe_key_match_id(match_id: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
-/// Generate or return a per-match Ed25519 SSH key.
+// ── RSA key helpers ──────────────────────────────────────────────────────────
+
+/// Encode an RSA public key in SSH authorized-keys format:
+/// "ssh-rsa <base64(wire)> <comment>\n"
+///
+/// Wire format (RFC 4253): length-prefixed "ssh-rsa", exponent, modulus.
+fn rsa_pubkey_to_ssh_authorized(
+    pub_key: &rsa::RsaPublicKey,
+    comment: &str,
+) -> Result<String, String> {
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine;
+    use rsa::traits::PublicKeyParts;
+
+    fn encode_mpint(n: &rsa::BigUint) -> Vec<u8> {
+        let mut bytes = n.to_bytes_be();
+        // Prepend 0x00 if the high bit is set (positive mpint).
+        if bytes.first().map(|&b| b >= 0x80).unwrap_or(false) {
+            bytes.insert(0, 0x00);
+        }
+        let mut out = Vec::with_capacity(4 + bytes.len());
+        let len = bytes.len() as u32;
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(&bytes);
+        out
+    }
+
+    fn encode_string(s: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(4 + s.len());
+        let len = s.len() as u32;
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(s);
+        out
+    }
+
+    let mut wire = Vec::new();
+    wire.extend_from_slice(&encode_string(b"ssh-rsa"));
+    wire.extend_from_slice(&encode_mpint(pub_key.e()));
+    wire.extend_from_slice(&encode_mpint(pub_key.n()));
+
+    Ok(format!("ssh-rsa {} {}\n", B64.encode(&wire), comment))
+}
+
+/// Compute the SHA-256 fingerprint of an RSA public key from its `.pub` file,
+/// returning "SHA256:<base64>" without trailing `=` (matching OpenSSH output).
+fn compute_rsa_fingerprint(pub_path: &std::path::Path) -> Option<String> {
+    use base64::engine::general_purpose::STANDARD_NO_PAD as B64;
+    use base64::Engine;
+
+    let content = std::fs::read_to_string(pub_path).ok()?;
+    // Authorized-keys line: "ssh-rsa <base64wire> <comment>"
+    let b64_wire = content.split_whitespace().nth(1)?;
+    let wire = base64::engine::general_purpose::STANDARD.decode(b64_wire).ok()?;
+
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(&wire);
+    Some(format!("SHA256:{}", B64.encode(hash)))
+}
+
+/// Generate or return a per-match RSA SSH key pair.
 ///
 /// The private key is written under app data and never returned. The frontend
 /// receives only the public key, fingerprint, and local private-key reference.
@@ -2772,65 +2831,45 @@ fn generate_owner_ssh_key(
         let _ = std::fs::set_permissions(&key_dir, std::fs::Permissions::from_mode(0o700));
     }
 
-    // RSA-3072 in PEM/PKCS#1 format: libssh2 reads PEM reliably across all platforms.
-    // Modern ssh-keygen defaults to OpenSSH format for RSA keys; -m PEM forces PKCS#1.
+    // RSA-3072 in PKCS#1 PEM format generated in pure Rust — no ssh-keygen needed.
+    // ssh-keygen defaults to OpenSSH format on modern systems, which libssh2 cannot
+    // reliably parse for user authentication. PKCS#1 PEM is universally supported.
     let key_path = key_dir.join(format!("{match_id}_rsa"));
     let pub_path = key_path.with_extension("pub");
 
-    // If an existing key is in OpenSSH format, try to convert it to PEM in-place.
-    // If conversion fails (e.g. Windows enforces a minimum passphrase for PEM),
-    // delete the pair so a fresh PEM key is generated below.
-    if key_path.exists() && pub_path.exists() {
-        let is_openssh_format = std::fs::read_to_string(&key_path)
+    // If an existing key is in OpenSSH format, remove it so a PEM key is generated.
+    if key_path.exists() {
+        let is_openssh = std::fs::read_to_string(&key_path)
             .map(|s| s.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"))
             .unwrap_or(false);
-        if is_openssh_format {
-            let converted = std::process::Command::new(find_ssh_keygen())
-                .args(["-p", "-m", "PEM", "-N", "", "-P", "", "-f"])
-                .arg(&key_path)
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            if !converted {
-                let _ = std::fs::remove_file(&key_path);
-                let _ = std::fs::remove_file(&pub_path);
-            }
+        if is_openssh {
+            let _ = std::fs::remove_file(&key_path);
+            let _ = std::fs::remove_file(&pub_path);
         }
     }
 
     let already_existed = key_path.exists() && pub_path.exists();
 
     if !already_existed {
-        let ssh_keygen = find_ssh_keygen();
-        let status = std::process::Command::new(&ssh_keygen)
-            .args([
-                "-t", "rsa",
-                "-b", "3072",
-                "-m", "PEM",
-                "-N", "",
-                "-C", &format!("nasbb-{match_id}"),
-                "-f",
-            ])
-            .arg(&key_path)
-            .status()
-            .map_err(|_| {
-                #[cfg(target_os = "windows")]
-                {
-                    "ssh-keygen was not found. Enable the OpenSSH optional feature: \
-                     Settings → System → Optional Features → Add: OpenSSH Client. \
-                     Alternatively, install Git for Windows which includes ssh-keygen."
-                        .to_string()
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    "ssh-keygen was not found. Install OpenSSH (openssh-client package) \
-                     or import an existing key manually."
-                        .to_string()
-                }
-            })?;
-        if !status.success() {
-            return Err("ssh-keygen failed while creating the per-match key".to_string());
-        }
+        use rsa::pkcs1::EncodeRsaPrivateKey;
+        let mut rng = rand::thread_rng();
+        let private_key = rsa::RsaPrivateKey::new(&mut rng, 3072)
+            .map_err(|e| format!("RSA key generation failed: {e}"))?;
+
+        // Write PKCS#1 PEM private key (-----BEGIN RSA PRIVATE KEY-----)
+        let pem = private_key
+            .to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
+            .map_err(|e| format!("Failed to encode private key as PEM: {e}"))?;
+        std::fs::write(&key_path, pem.as_bytes())
+            .map_err(|e| format!("Cannot write private key: {e}"))?;
+
+        // Build SSH authorized-keys public key: "ssh-rsa <base64> <comment>\n"
+        let pub_key = private_key.to_public_key();
+        let ssh_pub = rsa_pubkey_to_ssh_authorized(&pub_key, &format!("nasbb-{match_id}"))
+            .map_err(|e| format!("Failed to encode SSH public key: {e}"))?;
+        std::fs::write(&pub_path, ssh_pub)
+            .map_err(|e| format!("Cannot write public key: {e}"))?;
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -2844,20 +2883,20 @@ fn generate_owner_ssh_key(
         .trim()
         .to_string();
 
-    let fingerprint_out = std::process::Command::new(find_ssh_keygen())
-        .arg("-lf")
-        .arg(&pub_path)
-        .output()
-        .map_err(|_| "ssh-keygen was not found while fingerprinting the key".to_string())?;
-    let fingerprint = if fingerprint_out.status.success() {
-        String::from_utf8_lossy(&fingerprint_out.stdout)
-            .split_whitespace()
-            .nth(1)
-            .unwrap_or("fingerprint unavailable")
-            .to_string()
-    } else {
-        "fingerprint unavailable".to_string()
-    };
+    // Compute SHA-256 fingerprint from the public key wire bytes.
+    let fingerprint = compute_rsa_fingerprint(&pub_path).unwrap_or_else(|| {
+        // Fall back to ssh-keygen if available; non-fatal if absent.
+        std::process::Command::new(find_ssh_keygen())
+            .arg("-lf").arg(&pub_path)
+            .output()
+            .ok()
+            .and_then(|o| if o.status.success() {
+                String::from_utf8_lossy(&o.stdout)
+                    .split_whitespace().nth(1)
+                    .map(|s| s.to_string())
+            } else { None })
+            .unwrap_or_else(|| "fingerprint unavailable".to_string())
+    });
 
     Ok(OwnerSshKeyResult {
         match_id,

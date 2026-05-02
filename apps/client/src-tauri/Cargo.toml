@@ -24,3 +24,9 @@ tauri-plugin-store = "2"
 ureq = { version = "2", features = ["json"] }
 # Cross-platform OS keychain: macOS Keychain, Windows Credential Manager, Linux Secret Service
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+# RSA key generation in PKCS#1 PEM format (libssh2 reads PEM reliably; ssh-keygen
+# defaults to OpenSSH format on modern systems which some libssh2 builds can't parse).
+rsa = { version = "0.9", features = ["pem"] }
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.22"
