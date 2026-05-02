@@ -1502,7 +1502,29 @@ fn initialize_kopia_sftp_repository(
         .clone()
         .ok_or("No backup password set — go to Recovery Key page first")?;
 
+    // Build runner with no known_hosts_data first — we only need the config path.
+    let sftp_target_base = nasbb_core::kopia::SftpRepoTarget {
+        host: host.clone(),
+        port: sftp_port,
+        username: sftp_user.clone(),
+        path: sftp_path.clone(),
+        key_path: ssh_key_path.clone(),
+        known_hosts_data: None,
+    };
+    let (runner_base, _) = user_kopia_runner_sftp(&app, &sftp_target_base)?;
+
+    // If config file already exists the repository is already connected — no need for the
+    // host key entry since we won't call kopia repository create/connect again.
+    if runner_base.config_path.exists() {
+        return Ok(SftpRepositoryInitResult {
+            initialized: true,
+            already_existed: true,
+            message: "SFTP repository already connected from this session.".to_string(),
+        });
+    }
+
     // Look up the SSH host public key captured during Verify SFTP for Kopia's --known-hosts.
+    // This is only needed for kopia repository create/connect (not for snapshots).
     let known_hosts_data = {
         use tauri::Manager;
         app.path()
@@ -1528,15 +1550,6 @@ fn initialize_kopia_sftp_repository(
         known_hosts_data,
     };
     let (runner, target) = user_kopia_runner_sftp(&app, &sftp_target)?;
-
-    // If config file already exists, the repository is connected — skip re-creation.
-    if runner.config_path.exists() {
-        return Ok(SftpRepositoryInitResult {
-            initialized: true,
-            already_existed: true,
-            message: "SFTP repository already connected from this session.".to_string(),
-        });
-    }
 
     // Try create first; if the repository already exists on the remote side, connect instead.
     match runner.create_sftp_repository(&target, &password) {

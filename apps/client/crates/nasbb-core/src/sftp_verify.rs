@@ -229,8 +229,11 @@ pub fn verify_sftp_target(
     // handle, then drops it. Non-fatal if the server doesn't support the extension.
     let (free_bytes, quota_warning) = sftp_free_bytes(&sftp, remote_path);
 
-    // ── Step 9: Save fingerprint + host key entry on first use ───────────────
-    if fingerprint_status == FingerprintStatus::New {
+    // ── Step 9: Save / backfill fingerprint + host key entry ─────────────────
+    // Save on first use. Also update on Matching to backfill host_key_entry for
+    // entries written before this field was added (avoids "host key not captured"
+    // error on the first repository-create after an upgrade).
+    if matches!(fingerprint_status, FingerprintStatus::New | FingerprintStatus::Matching) {
         save_fingerprint_tofu(
             fingerprint.as_deref(),
             host_key_entry.as_deref(),
@@ -623,6 +626,22 @@ mod tests {
         save_fingerprint_tofu(Some("SHA256:fp"), None, "h", 22, Some(&path));
         let got = get_stored_host_key_entry("h", 22, &path);
         assert!(got.is_none());
+    }
+
+    #[test]
+    fn host_key_entry_backfilled_on_matching_fingerprint() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("known_fingerprints.json");
+        // Simulate old entry written before host_key_entry field was added
+        save_fingerprint_tofu(Some("SHA256:fp"), None, "h", 22, Some(&path));
+        assert!(get_stored_host_key_entry("h", 22, &path).is_none(), "should be missing initially");
+        // Re-save (as happens on Matching re-run) — now with host_key_entry
+        save_fingerprint_tofu(Some("SHA256:fp"), Some("[h]:22 ssh-ed25519 AAAA"), "h", 22, Some(&path));
+        let got = get_stored_host_key_entry("h", 22, &path);
+        assert_eq!(got.as_deref(), Some("[h]:22 ssh-ed25519 AAAA"));
+        // Fingerprint still matches after backfill
+        let status = check_fingerprint_tofu(Some("SHA256:fp"), "h", 22, Some(&path));
+        assert_eq!(status, FingerprintStatus::Matching);
     }
 
     #[test]
