@@ -7,6 +7,7 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:${NASBB_API_PORT:-7420}:7420"
+      - "${NASBB_SFTP_BIND:-127.0.0.1}:${NASBB_PEER_API_PORT:-7422}:7422"
     environment:
       NASBB_CONFIG_DIR: /config
       NASBB_STATE_DIR: /state
@@ -17,6 +18,8 @@ services:
       NASBB_SFTP_BIND: "${NASBB_SFTP_BIND:-127.0.0.1}"
       NASBB_SFTP_PORT: "${NASBB_SFTP_PORT:-2222}"
       NASBB_SFTP_HOST: "nasbb-sftp"
+      NASBB_PEER_API_PORT: "${NASBB_PEER_API_PORT:-7422}"
+      NASBB_PEER_API_BIND: "0.0.0.0"
       TAILSCALE_ADDRESS: "${TAILSCALE_ADDRESS:-}"
     volumes:
       - nasbb-config:/config

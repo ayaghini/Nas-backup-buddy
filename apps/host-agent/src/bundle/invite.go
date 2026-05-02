@@ -1,6 +1,9 @@
 package bundle
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"time"
 
 	"github.com/nasbb/host-agent/src/allocation"
@@ -19,7 +22,13 @@ type HostInviteBundle struct {
 	SFTP             inviteSFTP       `json:"sftp"`
 	Quota            inviteQuota      `json:"quota"`
 	HostKey          inviteHostKey    `json:"hostKey"`
+	PeerAPI          *invitePeerAPI   `json:"peerApi,omitempty"`
 	ExpiresAt        string           `json:"expiresAt"`
+}
+
+type invitePeerAPI struct {
+	SubmitURL string `json:"submitUrl"`
+	Token     string `json:"token"`
 }
 
 type inviteOverlay struct {
@@ -46,6 +55,15 @@ type inviteHostKey struct {
 	VerificationNote      string   `json:"verificationNote"`
 }
 
+// GenerateInviteToken creates a 32-byte cryptographically random hex token.
+func GenerateInviteToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
 // sftpHostForInvite returns the best available SFTP host for the invite bundle.
 //
 // Priority:
@@ -63,7 +81,15 @@ func sftpHostForInvite(ov overlay.Status, sftpBind string) string {
 	return "127.0.0.1"
 }
 
-func Generate(alloc *allocation.Allocation, cfg *config.Config, ov overlay.Status, fingerprint string, altFingerprints ...string) HostInviteBundle {
+// peerAPIHost returns the best host address for the peer API URL.
+// Falls back through the same priority order as sftpHostForInvite.
+func peerAPIHost(ov overlay.Status, sftpBind string) string {
+	return sftpHostForInvite(ov, sftpBind)
+}
+
+// Generate builds a HostInviteBundle. inviteToken is a one-time peer-API token
+// already saved on the allocation; if empty the peerApi section is omitted.
+func Generate(alloc *allocation.Allocation, cfg *config.Config, ov overlay.Status, fingerprint string, peerAPIPort int, inviteToken string, altFingerprints ...string) HostInviteBundle {
 	expiresAt := time.Now().UTC().AddDate(0, 0, 90).Format(time.RFC3339)
 
 	sftpHost := sftpHostForInvite(ov, cfg.SFTPBindAddress)
@@ -73,7 +99,7 @@ func Generate(alloc *allocation.Allocation, cfg *config.Config, ov overlay.Statu
 		overlayNote = "Tailscale not configured. Using local/bind address — only reachable on the same machine or local network."
 	}
 
-	return HostInviteBundle{
+	b := HostInviteBundle{
 		BundleVersion:    1,
 		Kind:             "nasbb.host_invite",
 		HostAgentVersion: "0.1.0",
@@ -102,4 +128,14 @@ func Generate(alloc *allocation.Allocation, cfg *config.Config, ov overlay.Statu
 		},
 		ExpiresAt: expiresAt,
 	}
+
+	if inviteToken != "" && peerAPIPort > 0 {
+		peerHost := peerAPIHost(ov, cfg.SFTPBindAddress)
+		b.PeerAPI = &invitePeerAPI{
+			SubmitURL: fmt.Sprintf("http://%s:%d/peer/v1/submit-response", peerHost, peerAPIPort),
+			Token:     inviteToken,
+		}
+	}
+
+	return b
 }

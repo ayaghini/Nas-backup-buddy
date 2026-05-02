@@ -182,6 +182,14 @@ func (s *Server) handleGenerateInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate a one-time invite token for the peer API auto-submit flow.
+	inviteToken, err := bundle.GenerateInviteToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate invite token", "INTERNAL")
+		return
+	}
+	alloc.InviteToken = inviteToken
+
 	fp, _ := s.sftpMgr.GetHostKeyFingerprint()
 	rsaFp, _ := s.sftpMgr.GetRSAHostKeyFingerprint()
 	// Always refresh overlay before generating an invite so the bundle contains
@@ -190,7 +198,7 @@ func (s *Server) handleGenerateInvite(w http.ResponseWriter, r *http.Request) {
 	if rsaFp != "" && rsaFp != fp {
 		altFps = append(altFps, rsaFp)
 	}
-	b := bundle.Generate(alloc, s.cfg, s.refreshOverlay(), fp, altFps...)
+	b := bundle.Generate(alloc, s.cfg, s.refreshOverlay(), fp, s.peerAPIPort, inviteToken, altFps...)
 
 	now := time.Now().UTC()
 	alloc.InviteExpiresAt = now.AddDate(0, 0, 90).Format(time.RFC3339)

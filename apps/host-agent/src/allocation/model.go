@@ -17,6 +17,7 @@ type Allocation struct {
 	CriticalThresholdPercent   int    `json:"criticalThresholdPercent"`
 	OwnerDeviceLabel           string `json:"ownerDeviceLabel"`
 	OwnerPublicKey             string `json:"ownerPublicKey,omitempty"`
+	InviteToken                string `json:"inviteToken,omitempty"`
 	InviteExpiresAt            string `json:"inviteExpiresAt"`
 	InviteExportedAt           string `json:"inviteExportedAt"`
 	OwnerKeyImportedAt         string `json:"ownerKeyImportedAt"`

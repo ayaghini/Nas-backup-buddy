@@ -965,6 +965,33 @@ export async function hostAgentRunVerify(): Promise<VerifyResult> {
   return invoke<VerifyResult>('host_agent_run_verify');
 }
 
+// ── Peer auto-submit ──────────────────────────────────────────────────────────
+
+/**
+ * POST the owner-access response directly to the host's peer API endpoint.
+ * Uses the Rust/ureq path to avoid CORS and mixed-content restrictions.
+ * Returns undefined on success, throws a descriptive string on failure.
+ */
+export async function submitPeerResponse(
+  submitUrl: string,
+  inviteToken: string,
+  matchId: string,
+  allocId: string,
+  ownerDeviceLabel: string,
+  ownerPublicKey: string,
+  requestedSftpUsername: string,
+): Promise<void> {
+  return invoke<void>('submit_peer_response', {
+    submitUrl,
+    inviteToken: inviteToken,
+    matchId,
+    allocId,
+    ownerDeviceLabel,
+    ownerPublicKey,
+    requestedSftpUsername,
+  });
+}
+
 // ── Peer tab file helpers ─────────────────────────────────────────────────────
 
 /** Open a file-open dialog filtered to JSON files and return the chosen path, or null. */

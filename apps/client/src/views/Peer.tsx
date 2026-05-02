@@ -34,6 +34,7 @@ import {
   readTextFile,
   runRealSftpBackupFromConfig,
   savePicker,
+  submitPeerResponse,
   verifySftpTarget,
   writeTextFile,
 } from '../lib/tauri-bridge';
@@ -241,6 +242,8 @@ export function Peer() {
   const [responseJson, setResponseJson] = useState('');
   const [generatingKey, setGeneratingKey] = useState(false);
   const [keyError, setKeyError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitResult, setSubmitResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   // Connect
   const [hostKeyConfirmedForAllocId, setHostKeyConfirmedForAllocId] = useState('');
@@ -428,6 +431,30 @@ export function Peer() {
     void savePeerState({ responseJson: json });
   }, [invite, ownerPublicKey]);
 
+  // ── Auto-submit response to host peer API ─────────────────────────────────
+  const handleAutoSubmit = useCallback(async () => {
+    if (!invite?.peerApi || !ownerPublicKey) return;
+    setSubmitting(true);
+    setSubmitResult(null);
+    try {
+      await submitPeerResponse(
+        invite.peerApi.submitUrl,
+        invite.peerApi.token,
+        invite.matchId,
+        invite.allocId,
+        deviceLabel,
+        ownerPublicKey,
+        invite.sftp.username,
+      );
+      setSubmitResult({ ok: true, message: 'Response sent to host automatically.' });
+      void savePeerState({ lastPhase: 'waiting_for_host' });
+    } catch (e) {
+      setSubmitResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setSubmitting(false);
+    }
+  }, [invite, ownerPublicKey, deviceLabel]);
+
   // ── Export response ────────────────────────────────────────────────────────
   const handleExportResponse = useCallback(async () => {
     if (!responseJson) return;
@@ -581,7 +608,7 @@ export function Peer() {
       case 'needs_invite':     return 'Paste or import the Host Invite Bundle JSON from your storage host.';
       case 'invite_invalid':   return 'Fix the invite JSON or ask your host for a fresh invite.';
       case 'needs_key':        return 'Generate your SSH key and copy the Owner Access Response to the host.';
-      case 'response_ready':   return 'Send the response JSON to your host and ask them to import it in Host → Allocations.';
+      case 'response_ready':   return invite?.peerApi ? 'Click "Auto-Submit to Host" to send the response automatically, or copy it manually.' : 'Send the response JSON to your host and ask them to import it in Host → Allocations.';
       case 'waiting_for_host': return 'Host has not yet imported your response. Ask them to import it, then re-run SFTP verify.';
       case 'sftp_verified':    return 'SFTP verified. Create or connect the Kopia SFTP repository in the Connect section.';
       case 'repo_ready':       return sourceFolders.length > 0 ? 'Run backup.' : 'Repository ready. Add source folders in Backup Plan, then run backup.';
@@ -774,7 +801,17 @@ export function Peer() {
                     <div className="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs text-slate-300 font-mono max-h-40 overflow-y-auto">
                       <pre className="whitespace-pre-wrap break-all">{responseJson}</pre>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {invite?.peerApi && appMode === 'tauri' && (
+                        <button
+                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                          onClick={handleAutoSubmit}
+                          disabled={submitting || submitResult?.ok === true}
+                        >
+                          {submitting ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                          {submitResult?.ok ? 'Sent!' : 'Auto-Submit to Host'}
+                        </button>
+                      )}
                       <CopyBtn text={responseJson} label="Copy response" />
                       {appMode === 'tauri' && (
                         <button
@@ -785,9 +822,21 @@ export function Peer() {
                         </button>
                       )}
                     </div>
-                    <p className="text-xs text-slate-400">
-                      Send this JSON to your host and ask them to import it in <strong className="text-slate-200">Host → Allocations</strong>.
-                    </p>
+                    {submitResult && (
+                      <span className={`flex items-center gap-1 text-xs ${submitResult.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {submitResult.ok ? <CheckCircle size={11} /> : <XCircle size={11} />}
+                        {submitResult.message}
+                      </span>
+                    )}
+                    {invite?.peerApi ? (
+                      <p className="text-xs text-slate-400">
+                        This invite supports <strong className="text-slate-200">auto-submit</strong>. Click "Auto-Submit to Host" above to send directly, or copy/export manually.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-slate-400">
+                        Send this JSON to your host and ask them to import it in <strong className="text-slate-200">Host → Allocations</strong>.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

@@ -3479,6 +3479,108 @@ fn host_agent_run_verify() -> Result<VerifyResult, String> {
     Ok(VerifyResult { output, passed, error: None })
 }
 
+/// POST the owner-access response directly to the host's peer API endpoint.
+///
+/// Uses ureq (runs in Rust, not the webview) so there are no CORS or
+/// mixed-content restrictions regardless of which Tailscale address is targeted.
+/// The submit_url comes from the invite bundle's peerApi.submitUrl field.
+/// No passwords or private keys are passed — only the public key and metadata.
+#[tauri::command]
+fn submit_peer_response(
+    submit_url: String,
+    invite_token: String,
+    match_id: String,
+    alloc_id: String,
+    owner_device_label: String,
+    owner_public_key: String,
+    requested_sftp_username: String,
+) -> Result<(), String> {
+    use serde_json::json;
+
+    let body = json!({
+        "inviteToken": invite_token,
+        "matchId": match_id,
+        "allocId": alloc_id,
+        "ownerPublicKey": owner_public_key,
+        "requestedSftpUsername": requested_sftp_username,
+        "ownerDeviceLabel": owner_device_label,
+        "createdAt": chrono_now_iso(),
+    });
+
+    let body_str = body.to_string();
+
+    let result = ureq::post(&submit_url)
+        .set("Content-Type", "application/json")
+        .send_string(&body_str);
+
+    match result {
+        Ok(resp) => {
+            let status = resp.status();
+            if status < 400 {
+                Ok(())
+            } else {
+                let body = resp.into_string().unwrap_or_default();
+                Err(format!("peer API returned HTTP {}: {}", status, body))
+            }
+        }
+        Err(ureq::Error::Status(status, resp)) => {
+            let body = resp.into_string().unwrap_or_default();
+            Err(format!("peer API returned HTTP {}: {}", status, body))
+        }
+        Err(e) => Err(format!("network error contacting peer API: {e}")),
+    }
+}
+
+fn chrono_now_iso() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Format as RFC3339 (UTC) without pulling in chrono
+    let s = secs % 60;
+    let m = (secs / 60) % 60;
+    let h = (secs / 3600) % 24;
+    let days = secs / 86400;
+    // Simple date calculation from epoch (2000 epoch adjustment would be cleaner,
+    // but for a createdAt field an approximate ISO string is sufficient)
+    let _ = (s, m, h, days);
+    // Fall back to a full implementation using the standard library
+    format_unix_utc(secs)
+}
+
+fn format_unix_utc(unix_secs: u64) -> String {
+    // Days since 1970-01-01
+    let mut days = unix_secs / 86400;
+    let time_of_day = unix_secs % 86400;
+    let hh = time_of_day / 3600;
+    let mm = (time_of_day % 3600) / 60;
+    let ss = time_of_day % 60;
+
+    let mut year = 1970u64;
+    loop {
+        let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        let days_in_year = if leap { 366 } else { 365 };
+        if days < days_in_year {
+            break;
+        }
+        days -= days_in_year;
+        year += 1;
+    }
+    let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    let month_days: [u64; 12] = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut month = 1u64;
+    for &md in &month_days {
+        if days < md {
+            break;
+        }
+        days -= md;
+        month += 1;
+    }
+    let day = days + 1;
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, month, day, hh, mm, ss)
+}
+
 /// Proxy an HTTP request to the local host-agent API via Rust (ureq).
 ///
 /// The frontend cannot reliably fetch http://127.0.0.1 from a tauri:// secure
@@ -3669,6 +3771,7 @@ pub fn run() {
             host_agent_get_token_hint,
             host_agent_run_verify,
             host_agent_http,
+            submit_peer_response,
             read_text_file,
             write_text_file,
         ])

@@ -156,6 +156,10 @@ export interface HostAgentInviteBundle {
     alternateFingerprints?: string[];
     verificationNote: string;
   };
+  peerApi?: {
+    submitUrl: string;
+    token: string;
+  };
   expiresAt: string;
 }
 

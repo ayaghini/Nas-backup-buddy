@@ -37,10 +37,17 @@ func main() {
 	sftpBind := getEnv("NASBB_SFTP_BIND", "127.0.0.1")
 	sftpPortStr := getEnv("NASBB_SFTP_PORT", "2222")
 	sftpHost := getEnv("NASBB_SFTP_HOST", "127.0.0.1")
+	peerAPIBindStr := getEnv("NASBB_PEER_API_BIND", sftpBind)
+	peerAPIPortStr := getEnv("NASBB_PEER_API_PORT", "7422")
 
 	sftpPort, _ := strconv.Atoi(sftpPortStr)
 	if sftpPort == 0 {
 		sftpPort = 2222
+	}
+
+	peerAPIPort, _ := strconv.Atoi(peerAPIPortStr)
+	if peerAPIPort == 0 {
+		peerAPIPort = 7422
 	}
 
 	cfg, err := config.Load(configDir)
@@ -75,6 +82,8 @@ func main() {
 		Str("bindAddr", bindAddr).
 		Str("sftpBind", sftpBind).
 		Int("sftpPort", sftpPort).
+		Str("peerAPIBind", peerAPIBindStr).
+		Int("peerAPIPort", peerAPIPort).
 		Msg("starting nasbb-agent")
 
 	ov := overlay.GetStatus(tailscaleAddr, sftpBind, sftpPort)
@@ -109,7 +118,18 @@ func main() {
 		SFTPBind:      sftpBind,
 		SFTPPort:      sftpPort,
 		SFTPHost:      sftpHost,
+		PeerAPIPort:   peerAPIPort,
 	})
+
+	// Start the peer-facing API server in a background goroutine.
+	peerSrv := api.NewPeerServer(srv)
+	peerBindAddr := fmt.Sprintf("%s:%d", peerAPIBindStr, peerAPIPort)
+	go func() {
+		log.Info().Str("addr", peerBindAddr).Msg("peer API listening")
+		if err := http.ListenAndServe(peerBindAddr, peerSrv.PeerRouter()); err != nil {
+			log.Error().Err(err).Msg("peer API server error")
+		}
+	}()
 
 	log.Info().Str("addr", bindAddr).Msg("listening")
 	if err := http.ListenAndServe(bindAddr, srv.Router()); err != nil {

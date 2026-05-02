@@ -28,6 +28,7 @@ type Server struct {
 	sftpBind         string
 	sftpPort         int
 	sftpHost         string
+	peerAPIPort      int
 	startedAt        time.Time
 }
 
@@ -44,6 +45,7 @@ type Options struct {
 	SFTPBind         string
 	SFTPPort         int
 	SFTPHost         string
+	PeerAPIPort      int
 }
 
 func New(opts Options) *Server {
@@ -60,6 +62,7 @@ func New(opts Options) *Server {
 		sftpBind:         opts.SFTPBind,
 		sftpPort:         opts.SFTPPort,
 		sftpHost:         opts.SFTPHost,
+		peerAPIPort:      opts.PeerAPIPort,
 		startedAt:        time.Now().UTC(),
 	}
 }
