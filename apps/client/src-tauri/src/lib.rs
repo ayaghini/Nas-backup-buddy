@@ -2777,17 +2777,24 @@ fn generate_owner_ssh_key(
     let key_path = key_dir.join(format!("{match_id}_rsa"));
     let pub_path = key_path.with_extension("pub");
 
-    // If an existing key is in OpenSSH format, convert it to PEM in-place.
-    // This preserves the key material so authorized_keys on the host stays valid.
+    // If an existing key is in OpenSSH format, try to convert it to PEM in-place.
+    // If conversion fails (e.g. Windows enforces a minimum passphrase for PEM),
+    // delete the pair so a fresh PEM key is generated below.
     if key_path.exists() && pub_path.exists() {
         let is_openssh_format = std::fs::read_to_string(&key_path)
             .map(|s| s.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"))
             .unwrap_or(false);
         if is_openssh_format {
-            let _ = std::process::Command::new(find_ssh_keygen())
+            let converted = std::process::Command::new(find_ssh_keygen())
                 .args(["-p", "-m", "PEM", "-N", "", "-P", "", "-f"])
                 .arg(&key_path)
-                .status();
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !converted {
+                let _ = std::fs::remove_file(&key_path);
+                let _ = std::fs::remove_file(&pub_path);
+            }
         }
     }
 
