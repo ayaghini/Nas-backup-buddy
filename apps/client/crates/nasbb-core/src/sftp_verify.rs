@@ -31,10 +31,10 @@
 //! - Linux: `sudo apt install libssh2-1-dev` / `sudo yum install libssh2-devel`.
 //! - Windows: available via the OpenSSH optional feature or Git for Windows.
 
-use base64::engine::general_purpose::STANDARD_NO_PAD as BASE64;
+use base64::engine::general_purpose::{STANDARD as BASE64_PAD, STANDARD_NO_PAD as BASE64};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
-use ssh2::{HashType, Session};
+use ssh2::{HashType, HostKeyType, Session};
 use std::collections::HashMap;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
@@ -141,10 +141,15 @@ pub fn verify_sftp_target(
             &format!("SSH handshake failed — {} (check overlay network and SSH daemon on host)", e));
     }
 
-    // ── Step 3: Fingerprint capture and TOFU check ────────────────────────────
+    // ── Step 3: Fingerprint + host key capture, TOFU check ───────────────────
     let fingerprint = session
         .host_key_hash(HashType::Sha256)
         .map(|bytes| format!("SHA256:{}", BASE64.encode(bytes)));
+
+    // Capture the raw wire-format public key for Kopia's --known-hosts requirement.
+    let host_key_entry = session
+        .host_key()
+        .and_then(|(raw, ktype)| build_known_hosts_entry(host, port, raw, ktype));
 
     let fingerprint_status = check_fingerprint_tofu(
         fingerprint.as_deref(), host, port, known_fingerprints_path,
@@ -224,9 +229,15 @@ pub fn verify_sftp_target(
     // handle, then drops it. Non-fatal if the server doesn't support the extension.
     let (free_bytes, quota_warning) = sftp_free_bytes(&sftp, remote_path);
 
-    // ── Step 9: Save fingerprint on first use ─────────────────────────────────
+    // ── Step 9: Save fingerprint + host key entry on first use ───────────────
     if fingerprint_status == FingerprintStatus::New {
-        save_fingerprint_tofu(fingerprint.as_deref(), host, port, known_fingerprints_path);
+        save_fingerprint_tofu(
+            fingerprint.as_deref(),
+            host_key_entry.as_deref(),
+            host,
+            port,
+            known_fingerprints_path,
+        );
     }
 
     if !write_test_passed {
@@ -297,6 +308,10 @@ fn try_authenticate(session: &Session, username: &str, key_path: Option<&str>) -
 struct KnownEntry {
     fingerprint: String,
     first_seen_utc: String,
+    /// SSH host public key in standard known_hosts format: `[host]:port keytype base64(wire)`.
+    /// Stored on first verify; used by Kopia's `--known-hosts` when creating the repository.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    host_key_entry: Option<String>,
 }
 
 type KnownHosts = HashMap<String, KnownEntry>;
@@ -336,6 +351,7 @@ fn check_fingerprint_tofu(
 
 fn save_fingerprint_tofu(
     fingerprint: Option<&str>,
+    host_key_entry: Option<&str>,
     host: &str,
     port: u16,
     path: Option<&Path>,
@@ -348,10 +364,38 @@ fn save_fingerprint_tofu(
     known.insert(key, KnownEntry {
         fingerprint: fp.to_string(),
         first_seen_utc: now_utc_iso(),
+        host_key_entry: host_key_entry.map(|s| s.to_string()),
     });
     if let Ok(json) = serde_json::to_string_pretty(&known) {
         let _ = std::fs::write(path, json);
     }
+}
+
+/// Return the stored SSH host public key entry for the given host:port in standard
+/// known_hosts format (`[host]:port keytype base64_wire_bytes`), or `None` if
+/// the entry has not been stored yet (i.e. Verify SFTP has not been run).
+pub fn get_stored_host_key_entry(host: &str, port: u16, path: &Path) -> Option<String> {
+    let key = tofu_key(host, port);
+    load_known_hosts(path).remove(&key)?.host_key_entry
+}
+
+/// Map `HostKeyType` to the SSH algorithm name used in known_hosts.
+fn host_key_type_str(key_type: HostKeyType) -> Option<&'static str> {
+    match key_type {
+        HostKeyType::Rsa => Some("ssh-rsa"),
+        HostKeyType::Ed25519 => Some("ssh-ed25519"),
+        HostKeyType::Dss => Some("ssh-dss"),
+        HostKeyType::Ecdsa256 => Some("ecdsa-sha2-nistp256"),
+        HostKeyType::Ecdsa384 => Some("ecdsa-sha2-nistp384"),
+        HostKeyType::Ecdsa521 => Some("ecdsa-sha2-nistp521"),
+        _ => None,
+    }
+}
+
+/// Build a standard known_hosts entry: `[host]:port keytype base64(wire_bytes)`.
+fn build_known_hosts_entry(host: &str, port: u16, raw: &[u8], key_type: HostKeyType) -> Option<String> {
+    let type_str = host_key_type_str(key_type)?;
+    Some(format!("[{}]:{} {} {}", host, port, type_str, BASE64_PAD.encode(raw)))
 }
 
 fn now_utc_iso() -> String {
@@ -502,7 +546,7 @@ mod tests {
     fn saved_fingerprint_returns_matching() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("known_fingerprints.json");
-        save_fingerprint_tofu(Some("SHA256:abc123"), "host.example", 22, Some(&path));
+        save_fingerprint_tofu(Some("SHA256:abc123"), None, "host.example", 22, Some(&path));
         let status = check_fingerprint_tofu(Some("SHA256:abc123"), "host.example", 22, Some(&path));
         assert_eq!(status, FingerprintStatus::Matching);
     }
@@ -511,7 +555,7 @@ mod tests {
     fn changed_fingerprint_returns_changed() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("known_fingerprints.json");
-        save_fingerprint_tofu(Some("SHA256:abc123"), "host.example", 22, Some(&path));
+        save_fingerprint_tofu(Some("SHA256:abc123"), None, "host.example", 22, Some(&path));
         let status = check_fingerprint_tofu(Some("SHA256:different"), "host.example", 22, Some(&path));
         assert_eq!(status, FingerprintStatus::Changed);
     }
@@ -520,8 +564,8 @@ mod tests {
     fn different_ports_stored_independently() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("known_fingerprints.json");
-        save_fingerprint_tofu(Some("SHA256:fp22"), "h", 22, Some(&path));
-        save_fingerprint_tofu(Some("SHA256:fp2222"), "h", 2222, Some(&path));
+        save_fingerprint_tofu(Some("SHA256:fp22"), None, "h", 22, Some(&path));
+        save_fingerprint_tofu(Some("SHA256:fp2222"), None, "h", 2222, Some(&path));
         assert_eq!(check_fingerprint_tofu(Some("SHA256:fp22"), "h", 22, Some(&path)), FingerprintStatus::Matching);
         assert_eq!(check_fingerprint_tofu(Some("SHA256:fp2222"), "h", 2222, Some(&path)), FingerprintStatus::Matching);
         assert_eq!(check_fingerprint_tofu(Some("SHA256:fp2222"), "h", 22, Some(&path)), FingerprintStatus::Changed);
@@ -545,7 +589,7 @@ mod tests {
     fn host_key_is_case_normalised() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("known_fingerprints.json");
-        save_fingerprint_tofu(Some("SHA256:fp"), "HOST.EXAMPLE", 22, Some(&path));
+        save_fingerprint_tofu(Some("SHA256:fp"), None, "HOST.EXAMPLE", 22, Some(&path));
         let status = check_fingerprint_tofu(Some("SHA256:fp"), "host.example", 22, Some(&path));
         assert_eq!(status, FingerprintStatus::Matching);
     }
@@ -554,12 +598,31 @@ mod tests {
     fn known_fingerprints_file_is_valid_json() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("known_fingerprints.json");
-        save_fingerprint_tofu(Some("SHA256:fp1"), "h1", 22, Some(&path));
-        save_fingerprint_tofu(Some("SHA256:fp2"), "h2", 2222, Some(&path));
+        save_fingerprint_tofu(Some("SHA256:fp1"), None, "h1", 22, Some(&path));
+        save_fingerprint_tofu(Some("SHA256:fp2"), None, "h2", 2222, Some(&path));
         let content = std::fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert!(parsed["h1:22"].is_object());
         assert!(parsed["h2:2222"].is_object());
+    }
+
+    #[test]
+    fn host_key_entry_stored_and_retrievable() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("known_fingerprints.json");
+        let entry = "[h]:22 ssh-rsa AAAA";
+        save_fingerprint_tofu(Some("SHA256:fp"), Some(entry), "h", 22, Some(&path));
+        let got = get_stored_host_key_entry("h", 22, &path);
+        assert_eq!(got.as_deref(), Some(entry));
+    }
+
+    #[test]
+    fn missing_host_key_entry_returns_none() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("known_fingerprints.json");
+        save_fingerprint_tofu(Some("SHA256:fp"), None, "h", 22, Some(&path));
+        let got = get_stored_host_key_entry("h", 22, &path);
+        assert!(got.is_none());
     }
 
     #[test]

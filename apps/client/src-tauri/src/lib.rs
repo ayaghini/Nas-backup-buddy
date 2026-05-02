@@ -1502,12 +1502,30 @@ fn initialize_kopia_sftp_repository(
         .clone()
         .ok_or("No backup password set — go to Recovery Key page first")?;
 
+    // Look up the SSH host public key captured during Verify SFTP for Kopia's --known-hosts.
+    let known_hosts_data = {
+        use tauri::Manager;
+        app.path()
+            .app_data_dir()
+            .ok()
+            .and_then(|d| {
+                let fp_path = d.join("known_fingerprints.json");
+                nasbb_core::sftp_verify::get_stored_host_key_entry(&host, sftp_port, &fp_path)
+            })
+    };
+    if known_hosts_data.is_none() {
+        return Err(
+            "SSH host key not captured yet — run 'Verify SFTP' first, then try again.".to_string(),
+        );
+    }
+
     let sftp_target = nasbb_core::kopia::SftpRepoTarget {
         host: host.clone(),
         port: sftp_port,
         username: sftp_user.clone(),
         path: sftp_path.clone(),
         key_path: ssh_key_path,
+        known_hosts_data,
     };
     let (runner, target) = user_kopia_runner_sftp(&app, &sftp_target)?;
 
@@ -1647,6 +1665,7 @@ fn run_real_sftp_backup_from_config(
         username: sftp_user.clone(),
         path: sftp_path.clone(),
         key_path: ssh_key_path,
+        known_hosts_data: None, // not needed for snapshot — repo already connected via config
     };
     let (runner, target) = user_kopia_runner_sftp(&app, &sftp_target)?;
 

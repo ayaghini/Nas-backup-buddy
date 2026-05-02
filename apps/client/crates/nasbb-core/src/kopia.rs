@@ -33,6 +33,10 @@ pub struct SftpRepoTarget {
     /// Path to the SSH private key file on the local machine.
     /// When None, Kopia uses the SSH agent or default key locations.
     pub key_path: Option<String>,
+    /// SSH host public key in standard known_hosts format.
+    /// Written to a per-target file and passed to kopia as `--known-hosts`.
+    /// Required by Kopia >= 0.13; obtained from `sftp_verify::get_stored_host_key_entry`.
+    pub known_hosts_data: Option<String>,
 }
 
 impl SftpRepoTarget {
@@ -238,6 +242,9 @@ impl KopiaRunner {
         if let Some(kp) = &target.key_path {
             cmd.arg("--keyfile").arg(kp);
         }
+        if let Some(kh_path) = self.write_known_hosts_file(target)? {
+            cmd.arg("--known-hosts").arg(kh_path);
+        }
         cmd.env("KOPIA_PASSWORD", password);
 
         let output = cmd.output().map_err(|_| KopiaError::Io)?;
@@ -274,6 +281,9 @@ impl KopiaRunner {
         if let Some(kp) = &target.key_path {
             cmd.arg("--keyfile").arg(kp);
         }
+        if let Some(kh_path) = self.write_known_hosts_file(target)? {
+            cmd.arg("--known-hosts").arg(kh_path);
+        }
         cmd.env("KOPIA_PASSWORD", password);
 
         let output = cmd.output().map_err(|_| KopiaError::Io)?;
@@ -283,6 +293,25 @@ impl KopiaRunner {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             Err(KopiaError::RepositoryConnectFailed(redact_output(&stderr)))
         }
+    }
+
+    /// Write `target.known_hosts_data` to a stable per-target file beside the Kopia config.
+    /// Returns the path if written (or if the file already exists from a prior run).
+    /// Returns `None` if `known_hosts_data` is absent and no prior file exists.
+    fn write_known_hosts_file(&self, target: &SftpRepoTarget) -> Result<Option<PathBuf>, KopiaError> {
+        let kh_path = match self.config_path.parent() {
+            Some(dir) => dir.join(format!("sftp-{}.known_hosts", target.config_id())),
+            None => PathBuf::from(format!("sftp-{}.known_hosts", target.config_id())),
+        };
+        if let Some(ref data) = target.known_hosts_data {
+            std::fs::write(&kh_path, data).map_err(|_| KopiaError::Io)?;
+            return Ok(Some(kh_path));
+        }
+        // Fall back to a previously written file (user ran Verify before this session).
+        if kh_path.exists() {
+            return Ok(Some(kh_path));
+        }
+        Ok(None)
     }
 
     /// Connect to an existing filesystem repository at `repo_path`.
@@ -627,6 +656,7 @@ mod tests {
             username: user.to_string(),
             path: path.to_string(),
             key_path: None,
+            known_hosts_data: None,
         }
     }
 
@@ -716,6 +746,7 @@ mod tests {
             username: "nasbb-match".to_string(),
             path: "/srv/nasbb/repo".to_string(),
             key_path: None,
+            known_hosts_data: None,
         };
         // Verify struct construction is valid (no execution)
         assert_eq!(target.port, 22);
@@ -730,6 +761,7 @@ mod tests {
             username: "u".to_string(),
             path: "/p".to_string(),
             key_path: None,
+            known_hosts_data: None,
         };
         let with_key = SftpRepoTarget {
             key_path: Some("/home/user/.ssh/id_ed25519".to_string()),
