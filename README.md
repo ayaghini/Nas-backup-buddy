@@ -8,7 +8,7 @@ Current repository status:
 
 - `apps/client` contains the active Tauri + React + Rust desktop client.
 - The primary host UI is now `Host`: it manages the Docker host-agent stack, `.env`, Tailscale/SFTP bind settings, allocations, host invite export, owner response import, events, diagnostics, and verification.
-- The next data-owner UI is `Peer`: it replaces the old `Peer Connection`/`Peer Storage` surfaces for the owner side. The user provides a Host Invite Bundle by paste or file import; the tab generates an owner SSH key/access response, verifies SFTP, creates/connects the Kopia repository, and tells the user what to send back to the host.
+- The data-owner UI is `Peer`: it replaces the old `Peer Connection`/`Peer Storage` surfaces for the owner side. The user provides a Host Invite Bundle by paste or file import; the tab generates an owner SSH key/access response, can auto-submit it to the host, verifies SFTP, creates/connects the Kopia repository, and can run a backup.
 - Tailscale is the supported v1 overlay path. Hosts advertise a Tailscale IP or MagicDNS name in the invite, while SFTP binds to a local Tailscale IP through the Docker `.env`.
 - The client remains local-first: private keys, backup passwords, and raw backup data stay local; telemetry is allowlisted; source folders must never be shared directly with peers.
 - Syncthing is no longer a normal setup path. Existing Syncthing code/tests remain as legacy/developer support while the product moves to Kopia-over-SFTP.
@@ -37,12 +37,12 @@ Progress is estimated by usable project capability, not by lines of code. The pr
 
 | Component | Progress | Status | What Exists | Main Remaining Work |
 | --- | ---: | --- | --- | --- |
-| Feasibility and product docs | `████████░░` 80% | Strong foundation | Feasibility study, architecture, implementation map, risk register, control plan, runbooks, ADRs | Keep docs updated as real POC results arrive |
+| Feasibility and product docs | `████████░░` 80% | Compact current docs | Feasibility study, architecture, implementation map, risk register, runbooks, ADRs, host/peer audits | Keep docs updated as real POC results arrive |
 | Web coordination prototype | `██████░░░░` 60% | Usable local prototype | Dashboard, matching, pacts, health, restore drills, incidents, admin, shared mock state | Real backend, auth, persistence, API contracts, production UX pass |
-| Desktop client | `████████░░` 85% | Main local app path implemented | Tauri + React UI, Docker Host tab, host-agent API client, host stack lifecycle commands, generated-data Kopia lab, SFTP verify, Kopia connect, local persistence, recovery-key flow, restore drill, health checks | Peer tab, production service lifecycle, OS keychain hardening, packaging polish |
+| Desktop client | `████████░░` 85% | Main local app path implemented | Tauri + React UI, Docker Host tab, Peer tab, host-agent API client, host stack lifecycle commands, generated-data Kopia lab, SFTP verify, Kopia connect, local persistence, recovery-key flow, restore drill, health checks | Production service lifecycle, OS keychain hardening, packaging polish |
 | Backup safety controls | `████████░░` 85% | Real generated-data lab plus peer-target checks | Protected gate, restore failure mapping, canary mismatch handling, repository verification failure mapping, hosted path isolation validation, telemetry consent wiring, real Kopia generated-data backup/verify/restore path | Two-machine peer restore evidence, incident submission to web app, longer soak testing |
 | Release and open-source foundation | `█████░░░░░` 50% | Started | AGPL-3.0-only license, third-party notices foundation, package scaffolds, macOS arm64 tool sources/checksums recorded | Complete dependency license inventory, signing, all-platform checksums, release process |
-| Kopia/SFTP/Tailscale integration | `███████░░░` 70% | Main v1 path wired in app | Redacted Kopia command planner, guarded local Kopia execution, generated-data test lab, TCP probe, SFTP auth/write verification, Kopia SFTP create/connect, Docker host-agent allocation/invite flow | Peer tab automation, real two-machine trial, hard quota evidence, keychain-backed production secrets |
+| Kopia/SFTP/Tailscale integration | `████████░░` 80% | Main v1 path wired in app | Redacted Kopia command planner, guarded local Kopia execution, generated-data test lab, TCP probe, SFTP auth/write verification, Kopia SFTP create/connect, Docker host-agent allocation/invite/peer auto-submit flow | Real two-machine trial, hard quota evidence, keychain-backed production secrets |
 | Infrastructure and backend | `█░░░░░░░░░` 10% | Future work | Web app mock state and coordination screens | API, database, auth, pairing tokens, health ingestion, invite/bundle exchange, reputation |
 | Real backup POC evidence | `████░░░░░░` 40% | Single-machine lab proven; two-machine runbook ready | Client can create a local test lab, run Kopia snapshot, verify repository content, restore canary data, and report health from actual outcomes | Run two-machine Kopia over SFTP/Tailscale trial, record results, prove restore from peer-hosted repository |
 | Production readiness | `░░░░░░░░░░` 0% | Not production-ready | Clear safety posture and launch constraints | Security review, legal review, reliability metrics, support process, paid-marketplace controls |
@@ -50,8 +50,8 @@ Progress is estimated by usable project capability, not by lines of code. The pr
 Next engineering priorities:
 
 - Run and document the two-machine Tailscale + SFTP + Kopia restore trial.
+- Harden peer API validation, invite-token redaction, and auto-submit state.
 - Harden secret storage with OS keychain support for production backup passwords and SSH key refs.
-- Implement the `Peer` tab from the new owner-side implementation prompt and remove the old `Peer Connection` route from primary navigation.
 - Connect client health reports to the web app once the API exists.
 - Keep the first launch invite-only and barter-based.
 
@@ -64,9 +64,9 @@ apps/
   host-agent/          Docker host-agent stack for storage hosts
   agent/               Legacy/future headless/NAS notes
 docs/
-  client-app/          Client app architecture, safety, config, and release docs
+  client-app/          Compact desktop client handoff
   adr/                 Architecture decision records
-  prompts/             Copy-paste prompts for future implementation agents
+  audits/              Current host/peer audit files
   research/            Source links and research notes
   runbooks/            Operator and prototype procedures
   templates/           User agreement and operational templates
@@ -82,7 +82,8 @@ scripts/               Future helper scripts
 - [Reference Architecture](docs/architecture.md)
 - [Implementation Map](docs/implementation-map.md)
 - [Client App Plan](docs/client-app/README.md)
-- [Control And Audit Plan](docs/control-and-audit-plan.md)
+- [Host Tab Audit](docs/audits/host-tab-audit-2026-05-02.md)
+- [Peer Tab Audit](docs/audits/peer-tab-audit-2026-05-02.md)
 - [Risk Register](docs/risk-register.md)
 - [Proof of Concept Runbook](docs/runbooks/proof-of-concept.md)
 - [Restore Drill Runbook](docs/runbooks/restore-drill.md)

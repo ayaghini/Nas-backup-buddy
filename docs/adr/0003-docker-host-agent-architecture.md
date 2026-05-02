@@ -108,7 +108,7 @@ Negative:
 
 ## Follow-Up
 
-- Implement per `agent-implementation-plan.md`.
+- Keep the compact host-agent contract/runbook current as implementation changes.
 - After Phase 1 POC, evaluate container-managed Tailscale if host-managed proves
   too difficult for NAS users.
 - After Phase 2 alpha, evaluate ZFS dataset quota based on what filesystems
