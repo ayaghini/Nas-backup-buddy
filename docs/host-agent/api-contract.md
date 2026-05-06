@@ -24,6 +24,7 @@ Use `NASBB_SFTP_BIND=<host Tailscale 100.x IP>` and `TAILSCALE_ADDRESS=<same 100
 - `GET /storage/status`.
 - `GET|POST /allocations`.
 - `GET|PATCH /allocations/{allocId}`.
+- `DELETE /allocations/{allocId}`: permanently deletes the allocation and its JSON file; deauthorizes SFTP key if `READY`/`SUSPENDED`; returns `204 No Content`; returns `404` with `NOT_FOUND` if not found.
 - `POST /allocations/{allocId}/invite`: allowed in `DRAFT` or `EXPIRED`; returns Host Invite Bundle; moves to `PENDING_KEY`.
 - `POST /allocations/{allocId}/owner-response`: validates response; authorizes key; moves to `READY`.
 - `POST /allocations/{allocId}/suspend|resume|retire`.

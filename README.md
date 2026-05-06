@@ -8,7 +8,7 @@ Current repository status:
 
 - `apps/client` contains the active Tauri + React + Rust desktop client.
 - The primary host UI is now `Host`: it manages the Docker host-agent stack, `.env`, Tailscale/SFTP bind settings, allocations, host invite export, owner response import, events, diagnostics, and verification.
-- The data-owner UI is `Peer`: it replaces the old `Peer Connection`/`Peer Storage` surfaces for the owner side. The user provides a Host Invite Bundle by paste or file import; the tab generates an owner SSH key/access response, can auto-submit it to the host, verifies SFTP, creates/connects the Kopia repository, and can run a backup.
+- The data-owner UI is `Peer`: it supports multiple simultaneous peer connections. Each peer goes through an invite → response → connect → backup lifecycle. The peer list is a horizontal scrollable tab strip; selecting a peer auto-opens the correct accordion section based on its current phase. The user provides a Host Invite Bundle by paste or file import; the tab generates an owner SSH key/access response, can auto-submit it to the host, verifies SFTP, creates/connects the Kopia repository, and can run a backup. All peer state persists via `savedPeers` in the app config.
 - Tailscale is the supported v1 overlay path. Hosts advertise a Tailscale IP or MagicDNS name in the invite, while SFTP binds to a local Tailscale IP through the Docker `.env`.
 - The client remains local-first: private keys, backup passwords, and raw backup data stay local; telemetry is allowlisted; source folders must never be shared directly with peers.
 - Syncthing is no longer a normal setup path. Existing Syncthing code/tests remain as legacy/developer support while the product moves to Kopia-over-SFTP.
@@ -27,9 +27,10 @@ Data owner source folders
 Peer setup is intentionally two-sided:
 
 1. Storage host opens `Host`, starts or connects to the Docker host-agent stack, configures Tailscale/SFTP settings, creates an allocation, and exports the Host Invite Bundle JSON.
-2. Data owner opens `Peer`, imports the Host Invite Bundle JSON by paste or file, generates or selects an owner SSH key, and exports the Owner Access Response JSON.
-3. Storage host imports the Owner Access Response in `Host`; the host-agent authorizes the public key and activates SFTP access.
-4. Data owner verifies Tailscale/TCP/SFTP reachability, creates or connects the Kopia SFTP repository, then runs backup/restore checks.
+2. Data owner opens `Peer`, clicks "Add peer", imports the Host Invite Bundle JSON by paste or file, generates an owner SSH key, and auto-submits or exports the Owner Access Response JSON.
+3. Storage host imports the Owner Access Response in `Host → Allocations`; the host-agent authorizes the public key and activates SFTP access.
+4. Data owner opens `Setup Wizard`, selects the connected peer from the peer-selection card list (all SFTP fields auto-fill), adds source folders, and configures retention.
+5. Data owner verifies Tailscale/TCP/SFTP reachability in `Peer → Connect`, creates or connects the Kopia SFTP repository, then runs the first backup.
 
 ### Project Progress
 
@@ -39,7 +40,7 @@ Progress is estimated by usable project capability, not by lines of code. The pr
 | --- | ---: | --- | --- | --- |
 | Feasibility and product docs | `████████░░` 80% | Compact current docs | Feasibility study, architecture, implementation map, risk register, runbooks, ADRs, host/peer audits | Keep docs updated as real POC results arrive |
 | Web coordination prototype | `██████░░░░` 60% | Usable local prototype | Dashboard, matching, pacts, health, restore drills, incidents, admin, shared mock state | Real backend, auth, persistence, API contracts, production UX pass |
-| Desktop client | `████████░░` 85% | Main local app path implemented | Tauri + React UI, Docker Host tab, Peer tab, host-agent API client, host stack lifecycle commands, generated-data Kopia lab, SFTP verify, Kopia connect, local persistence, recovery-key flow, restore drill, health checks | Production service lifecycle, OS keychain hardening, packaging polish |
+| Desktop client | `█████████░` 90% | Main local app path implemented | Tauri + React UI, Docker Host tab, multi-peer Peer tab, host-agent API client, host stack lifecycle commands, generated-data Kopia lab, SFTP verify, Kopia connect, local persistence, recovery-key flow, restore drill, health checks, allocation delete, setup wizard peer-select cards | Production service lifecycle, OS keychain hardening, packaging polish |
 | Backup safety controls | `████████░░` 85% | Real generated-data lab plus peer-target checks | Protected gate, restore failure mapping, canary mismatch handling, repository verification failure mapping, hosted path isolation validation, telemetry consent wiring, real Kopia generated-data backup/verify/restore path | Two-machine peer restore evidence, incident submission to web app, longer soak testing |
 | Release and open-source foundation | `█████░░░░░` 50% | Started | AGPL-3.0-only license, third-party notices foundation, package scaffolds, macOS arm64 tool sources/checksums recorded | Complete dependency license inventory, signing, all-platform checksums, release process |
 | Kopia/SFTP/Tailscale integration | `████████░░` 80% | Main v1 path wired in app | Redacted Kopia command planner, guarded local Kopia execution, generated-data test lab, TCP probe, SFTP auth/write verification, Kopia SFTP create/connect, Docker host-agent allocation/invite/peer auto-submit flow | Real two-machine trial, hard quota evidence, keychain-backed production secrets |
@@ -50,7 +51,8 @@ Progress is estimated by usable project capability, not by lines of code. The pr
 Next engineering priorities:
 
 - Run and document the two-machine Tailscale + SFTP + Kopia restore trial.
-- Harden peer API validation, invite-token redaction, and auto-submit state.
+- Harden peer API: share manual import parser with peer API; add tests for expired invite, match mismatch, username mismatch, token replay.
+- Redact `inviteToken` from allocation summaries in host-agent API responses.
 - Harden secret storage with OS keychain support for production backup passwords and SSH key refs.
 - Connect client health reports to the web app once the API exists.
 - Keep the first launch invite-only and barter-based.
@@ -82,8 +84,9 @@ scripts/               Future helper scripts
 - [Reference Architecture](docs/architecture.md)
 - [Implementation Map](docs/implementation-map.md)
 - [Client App Plan](docs/client-app/README.md)
-- [Host Tab Audit](docs/audits/host-tab-audit-2026-05-02.md)
-- [Peer Tab Audit](docs/audits/peer-tab-audit-2026-05-02.md)
+- [Client Tab Audit 2026-05-05](docs/audits/client-tab-audit-2026-05-05.md)
+- [Host Tab Audit 2026-05-02](docs/audits/host-tab-audit-2026-05-02.md)
+- [Peer Tab Audit 2026-05-02](docs/audits/peer-tab-audit-2026-05-02.md)
 - [Risk Register](docs/risk-register.md)
 - [Proof of Concept Runbook](docs/runbooks/proof-of-concept.md)
 - [Restore Drill Runbook](docs/runbooks/restore-drill.md)
