@@ -7,6 +7,7 @@ import type {
   RealCheckResult,
   RealDrillResult,
   RepoJobStatus,
+  SavedPeer,
   SetupDraftConfig,
   SyncthingLiveStatus,
   TestLabInfo,
@@ -50,6 +51,8 @@ interface AppContextValue {
   wizardConfig: SetupDraftConfig | null;
   /** Whether a master encryption password has been set this session. */
   masterPasswordSet: boolean;
+  /** All saved peer connections (as data owner). */
+  savedPeers: SavedPeer[];
   /** Per-repo job statuses keyed by wizardConfigs index. */
   repoJobStatuses: Record<number, RepoJobStatus>;
   /** Live Syncthing status polled every 15 s. Null until first poll completes. */
@@ -67,6 +70,10 @@ interface AppContextValue {
   setRecoveryKeyConfirmed: (v: boolean) => void;
   setMasterPasswordSet: (v: boolean) => void;
   applyWizardConfig: (draft: SetupDraftConfig) => void;
+  /** Insert or replace a saved peer by id. */
+  upsertSavedPeer: (peer: SavedPeer) => void;
+  /** Remove a peer by id. */
+  removeSavedPeer: (id: string) => void;
   /** Init + backup for the config at wizardConfigs[index]. */
   triggerRepoBackup: (configIndex: number) => Promise<void>;
   addLogLine: (raw: string, redacted: string) => void;
@@ -93,6 +100,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
   const [healthReport, setHealthReport] = useState<HealthReport>(DEFAULT_HEALTH_REPORT);
   const [readiness, setReadiness] = useState<IntegrationCheckResult | null>(null);
   const [wizardConfigs, setWizardConfigs] = useState<SetupDraftConfig[]>([]);
+  const [savedPeers, setSavedPeers] = useState<SavedPeer[]>([]);
   const [masterPasswordSet, setMasterPasswordSetState] = useState(false);
   const [repoJobStatuses, setRepoJobStatuses] = useState<Record<number, RepoJobStatus>>({});
   const [syncthingLiveStatus] = useState<SyncthingLiveStatus | null>(null);
@@ -196,6 +204,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       if (saved.recoveryKeyConfirmed) setRecoveryKeyConfirmed(saved.recoveryKeyConfirmed);
       if (saved.healthReportConsent) setHealthReportConsent(saved.healthReportConsent);
       if (saved.offlineMode) setOfflineMode(saved.offlineMode);
+      if (saved.savedPeers?.length) setSavedPeers(saved.savedPeers);
     }).finally(() => setPersistedLoaded(true));
   }, []);
 
@@ -204,6 +213,12 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     if (!persistedLoaded) return;
     void savePersistedConfig({ wizardConfigs });
   }, [wizardConfigs, persistedLoaded]);
+
+  // Save savedPeers to disk whenever they change (after initial load)
+  useEffect(() => {
+    if (!persistedLoaded) return;
+    void savePersistedConfig({ savedPeers });
+  }, [savedPeers, persistedLoaded]);
 
   // Syncthing live polling is intentionally disabled in the default v1 path.
   // Kopia over SFTP on Tailscale is the primary transport; the Syncthing route
@@ -428,6 +443,22 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
     void savePersistedConfig({ offlineMode: v });
   }, []);
 
+  const upsertSavedPeer = useCallback((peer: SavedPeer) => {
+    setSavedPeers(prev => {
+      const idx = prev.findIndex(p => p.id === peer.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = peer;
+        return next;
+      }
+      return [...prev, peer];
+    });
+  }, []);
+
+  const removeSavedPeer = useCallback((id: string) => {
+    setSavedPeers(prev => prev.filter(p => p.id !== id));
+  }, []);
+
   const wizardConfig = wizardConfigs.length > 0 ? wizardConfigs[wizardConfigs.length - 1] : null;
 
   return (
@@ -438,6 +469,7 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       wizardConfigs,
       wizardConfig,
       masterPasswordSet,
+      savedPeers,
       repoJobStatuses,
       syncthingLiveStatus,
       offlineMode,
@@ -451,6 +483,8 @@ export function AppContextProvider({ children }: { children: React.ReactNode }) 
       setRecoveryKeyConfirmed: handleSetRecoveryKeyConfirmed,
       setMasterPasswordSet,
       applyWizardConfig,
+      upsertSavedPeer,
+      removeSavedPeer,
       triggerRepoBackup,
       addLogLine,
       updateHealthFromCheckResult,

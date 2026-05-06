@@ -318,6 +318,24 @@ func (s *Server) handleRetire(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sum)
 }
 
+func (s *Server) handleDeleteAllocation(w http.ResponseWriter, r *http.Request) {
+	allocID := chi.URLParam(r, "allocId")
+	alloc, err := s.manager.Get(allocID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "allocation not found", "NOT_FOUND")
+		return
+	}
+	if alloc.Username != "" {
+		s.sftpMgr.DeauthorizeKey(alloc.Username)
+	}
+	if err := s.manager.Delete(allocID); err != nil {
+		code, status := errorCode(err)
+		writeError(w, status, err.Error(), code)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // ── Health / Overlay / SFTP Status / Storage ─────────────────────────────────
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

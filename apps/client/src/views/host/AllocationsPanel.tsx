@@ -10,6 +10,7 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  Trash2,
   Upload,
 } from 'lucide-react';
 import type {
@@ -23,6 +24,7 @@ import { formatBytes, classifyReachability } from '../../lib/host-agent-types';
 import type { HostEnvValues } from '../../lib/host-agent-types';
 import {
   createAllocation,
+  deleteAllocation,
   generateInvite,
   getOverlayStatus,
   importOwnerResponse,
@@ -91,7 +93,9 @@ function AllocationRow({
   const [responseText, setResponseText] = useState('');
   const [confirmLocalTest, setConfirmLocalTest] = useState(false);
   const [confirmUnknown, setConfirmUnknown] = useState(false);
+  const [confirmSuspend, setConfirmSuspend] = useState(false);
   const [confirmRetire, setConfirmRetire] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function doGenerateInvite() {
@@ -125,6 +129,7 @@ function AllocationRow({
     try {
       const inv = await generateInvite(token, alloc.allocId, apiUrl);
       setInvite(inv);
+      onRefresh();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -158,10 +163,11 @@ function AllocationRow({
   }
 
   async function doSuspend() {
+    if (!confirmSuspend) { setConfirmSuspend(true); return; }
     setBusy('suspend'); setError(null);
     try { await suspendAllocation(token, alloc.allocId, apiUrl); onRefresh(); }
     catch (e) { setError(errorMessage(e)); }
-    finally { setBusy(null); }
+    finally { setBusy(null); setConfirmSuspend(false); }
   }
 
   async function doResume() {
@@ -177,6 +183,14 @@ function AllocationRow({
     try { await retireAllocation(token, alloc.allocId, 7, apiUrl); onRefresh(); }
     catch (e) { setError(errorMessage(e)); }
     finally { setBusy(null); setConfirmRetire(false); }
+  }
+
+  async function doDelete() {
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    setBusy('delete'); setError(null);
+    try { await deleteAllocation(token, alloc.allocId, apiUrl); onRefresh(); }
+    catch (e) { setError(errorMessage(e)); }
+    finally { setBusy(null); setConfirmDelete(false); }
   }
 
   function copyInvite() {
@@ -338,14 +352,22 @@ function AllocationRow({
 
             {/* Lifecycle */}
             {alloc.state === 'READY' && (
-              <button
-                onClick={doSuspend}
-                disabled={!!busy}
-                className="px-2.5 py-1.5 rounded bg-orange-700/50 hover:bg-orange-700/70 text-xs text-orange-200 disabled:opacity-50"
-              >
-                {busy === 'suspend' ? <Loader2 size={11} className="animate-spin inline mr-1" /> : null}
-                Suspend access
-              </button>
+              confirmSuspend ? (
+                <span className="text-xs text-orange-300">
+                  Revoke SFTP access immediately?{' '}
+                  <button className="underline" onClick={doSuspend}>Suspend</button>
+                  {' '}<button className="text-slate-400" onClick={() => setConfirmSuspend(false)}>Cancel</button>
+                </span>
+              ) : (
+                <button
+                  onClick={doSuspend}
+                  disabled={!!busy}
+                  className="px-2.5 py-1.5 rounded bg-orange-700/50 hover:bg-orange-700/70 text-xs text-orange-200 disabled:opacity-50"
+                >
+                  {busy === 'suspend' ? <Loader2 size={11} className="animate-spin inline mr-1" /> : null}
+                  Suspend access
+                </button>
+              )
             )}
             {alloc.state === 'SUSPENDED' && (
               <button
@@ -380,6 +402,31 @@ function AllocationRow({
             )}
           </div>
 
+            {/* Delete */}
+            <div className="w-full border-t border-slate-800/60 pt-2 mt-1">
+              {confirmDelete ? (
+                <span className="text-xs text-red-400">
+                  {(alloc.state === 'READY' || alloc.state === 'SUSPENDED') && (
+                    <span className="block text-red-300 mb-1">
+                      Warning: this allocation has an active peer. Deleting will immediately revoke SFTP access.
+                    </span>
+                  )}
+                  Permanently delete this allocation?{' '}
+                  <button className="underline" onClick={doDelete}>Delete</button>
+                  {' '}<button className="text-slate-400" onClick={() => setConfirmDelete(false)}>Cancel</button>
+                </span>
+              ) : (
+                <button
+                  onClick={doDelete}
+                  disabled={!!busy}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs text-slate-500 hover:text-red-400 hover:bg-red-900/20 disabled:opacity-50"
+                >
+                  {busy === 'delete' ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                  Delete
+                </button>
+              )}
+            </div>
+
           {error && (
             <div className="px-2 py-1.5 rounded bg-red-900/30 border border-red-700/40 text-xs text-red-300 flex items-start gap-1.5">
               <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />
@@ -399,6 +446,7 @@ export function AllocationsPanel({ token, apiUrl, env }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [showRetired, setShowRetired] = useState(false);
   const [form, setForm] = useState<Partial<CreateAllocationRequest>>({
     connectionName: '',
     bandwidthCapBytesPerSecond: 0,
@@ -572,18 +620,34 @@ export function AllocationsPanel({ token, apiUrl, env }: Props) {
         <div className="text-xs text-slate-500 p-3">No allocations yet. Create one above.</div>
       ) : (
         <div className="space-y-2">
-          {allocs.map(a => (
-            <AllocationRow
-              key={a.allocId}
-              alloc={a}
-              token={token}
-              apiUrl={apiUrl}
-              env={env}
-              reachClass={reachClass}
-              agentOverlay={agentOverlay}
-              onRefresh={load}
-            />
-          ))}
+          {(() => {
+            const retiredCount = allocs.filter(a => a.state === 'RETIRED').length;
+            const visible = showRetired ? allocs : allocs.filter(a => a.state !== 'RETIRED');
+            return (
+              <>
+                {visible.map(a => (
+                  <AllocationRow
+                    key={a.allocId}
+                    alloc={a}
+                    token={token}
+                    apiUrl={apiUrl}
+                    env={env}
+                    reachClass={reachClass}
+                    agentOverlay={agentOverlay}
+                    onRefresh={load}
+                  />
+                ))}
+                {retiredCount > 0 && (
+                  <button
+                    onClick={() => setShowRetired(v => !v)}
+                    className="w-full text-xs text-slate-500 hover:text-slate-300 py-1.5 border border-dashed border-slate-800 rounded transition-colors"
+                  >
+                    {showRetired ? `Hide retired (${retiredCount})` : `Show retired (${retiredCount})`}
+                  </button>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

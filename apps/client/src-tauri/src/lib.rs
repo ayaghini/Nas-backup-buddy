@@ -1551,29 +1551,27 @@ fn initialize_kopia_sftp_repository(
     };
     let (runner, target) = user_kopia_runner_sftp(&app, &sftp_target)?;
 
-    // Try create first; if the repository already exists on the remote side, connect instead.
+    // Try create first. On any create failure, attempt connect as fallback —
+    // the remote may already have an initialised repository (reconnect after reinstall,
+    // or the peer pre-initialised the path). Both paths use the same password.
+    // If connect also fails, surface the original create error (more actionable for
+    // a genuinely new repository where the real problem is a network or auth issue).
     match runner.create_sftp_repository(&target, &password) {
         Ok(()) => Ok(SftpRepositoryInitResult {
             initialized: true,
             already_existed: false,
             message: "Encrypted SFTP repository created successfully.".to_string(),
         }),
-        Err(nasbb_core::kopia::KopiaError::RepositoryCreateFailed(msg)) => {
-            // Repository may already exist on the remote — attempt connect.
-            if msg.to_lowercase().contains("already") || msg.to_lowercase().contains("exist") {
-                runner
-                    .connect_sftp_repository(&target, &password)
-                    .map_err(|e| format!("SFTP repository connect failed: {e}"))?;
-                Ok(SftpRepositoryInitResult {
+        Err(create_err) => {
+            match runner.connect_sftp_repository(&target, &password) {
+                Ok(()) => Ok(SftpRepositoryInitResult {
                     initialized: true,
                     already_existed: true,
                     message: "Connected to existing encrypted SFTP repository.".to_string(),
-                })
-            } else {
-                Err(format!("SFTP repository creation failed: {msg}"))
+                }),
+                Err(_) => Err(format!("SFTP repository setup failed: {create_err}")),
             }
         }
-        Err(e) => Err(format!("SFTP repository creation failed: {e}")),
     }
 }
 

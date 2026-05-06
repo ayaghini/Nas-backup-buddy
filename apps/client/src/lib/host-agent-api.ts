@@ -252,6 +252,10 @@ export function retireAllocation(
   });
 }
 
+export function deleteAllocation(token: string, allocId: string, baseUrl = DEFAULT_BASE) {
+  return apiFetch<void>(baseUrl, `/allocations/${allocId}`, token, { method: 'DELETE' });
+}
+
 export async function getEvents(
   token: string,
   options: { limit?: number; after?: string } = {},

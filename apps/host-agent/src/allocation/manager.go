@@ -228,6 +228,18 @@ func (m *Manager) save(alloc *Allocation) error {
 	return os.Rename(tmp, path)
 }
 
+func (m *Manager) Delete(allocID string) error {
+	path := filepath.Join(m.configDir, "allocations", allocID+".json")
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("NOT_FOUND")
+		}
+		return err
+	}
+	m.log.Append("allocation.deleted", allocID, "allocation permanently deleted")
+	return nil
+}
+
 func (m *Manager) Transition(alloc *Allocation, newState string) error {
 	allowed, ok := validTransitions[alloc.State]
 	if !ok {

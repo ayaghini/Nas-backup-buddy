@@ -160,7 +160,9 @@ impl KopiaRunner {
         let mut cmd = Command::new(&self.binary_path);
         cmd.arg("--config-file")
             .arg(&self.config_path)
-            .env("KOPIA_CHECK_FOR_UPDATES", "false");
+            // Suppress update checks and noisy progress output for non-interactive runs.
+            .env("KOPIA_CHECK_FOR_UPDATES", "false")
+            .env("KOPIA_PROGRESS_UPDATE_INTERVAL", "0");
         cmd
     }
 

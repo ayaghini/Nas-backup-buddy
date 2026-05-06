@@ -8,7 +8,7 @@
 //
 // Only non-secret data is stored here. Passwords stay in the OS keychain.
 
-import type { BackupTarget, HostAllocation, OwnerSshKey, OverlayMeta, SetupDraftConfig } from './types';
+import type { BackupTarget, HostAllocation, OwnerSshKey, OverlayMeta, SavedPeer, SetupDraftConfig } from './types';
 
 declare global {
   interface Window { __TAURI_INTERNALS__?: unknown; }
@@ -52,6 +52,8 @@ export interface PersistedConfig {
   backupTargets?: BackupTarget[];
   /** Non-secret owner-side SSH key refs/public keys, one per match. */
   ownerSshKeys?: OwnerSshKey[];
+  /** All peer match connections this device has as a data owner. */
+  savedPeers?: SavedPeer[];
 }
 
 export async function loadPersistedConfig(): Promise<Partial<PersistedConfig>> {
@@ -73,6 +75,7 @@ export async function loadPersistedConfig(): Promise<Partial<PersistedConfig>> {
       hostAllocations: Array.isArray(raw.hostAllocations) ? raw.hostAllocations as HostAllocation[] : [],
       backupTargets: Array.isArray(raw.backupTargets) ? raw.backupTargets as BackupTarget[] : [],
       ownerSshKeys: Array.isArray(raw.ownerSshKeys) ? raw.ownerSshKeys as OwnerSshKey[] : [],
+      savedPeers: Array.isArray(raw.savedPeers) ? raw.savedPeers as SavedPeer[] : [],
     };
   } catch (e) {
     console.error('[persistence] load failed:', e);

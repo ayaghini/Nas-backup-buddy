@@ -1,25 +1,14 @@
-import { AlertTriangle, CheckCircle, Shield, XCircle } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, CheckCircle, Loader2, RefreshCw, Shield, XCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
-const GATE_CHECKS = [
-  'Backup snapshot exists',
-  'Remote encrypted repository reachable on peer storage',
-  'Restore drill completed',
-  'Canary checksum matches',
-  'User has recovery key / password',
-  'Retention policy configured',
-  'Peer quota has buffer (≥15% free)',
-  'No critical health alerts',
-];
-
 const THRESHOLDS: Array<[string, string, string]> = [
-  ['Last backup age',           '> 24h → Warning',     '> 72h → Critical'],
-  ['Remote repository target',  '> 24h unreachable → Warning', '> 72h unreachable or auth failed → Critical'],
-  ['Free quota',                '< 15% → Warning',     '< 5% → Critical'],
-  ['Restore drill age',         '> 30 days → Warning', 'Never run / failed → Critical'],
-  ['Peer offline',              '> 24h → Warning',     '> 7 days → Critical'],
-  ['Repository verification',   'Tool warning',         'Verification failed → Critical'],
-  ['Syncthing mirror (legacy)', '> 24h → Warning',     '> 72h → Critical (optional mode)'],
+  ['Last backup age',          '> 24h → Warning',     '> 72h → Critical'],
+  ['Remote repository',        '> 24h unreachable → Warning', '> 72h unreachable or auth failed → Critical'],
+  ['Free quota',               '< 15% → Warning',     '< 5% → Critical'],
+  ['Restore drill age',        '> 30 days → Warning', 'Never run / failed → Critical'],
+  ['Peer offline',             '> 24h → Warning',     '> 7 days → Critical'],
+  ['Repository verification',  'Tool warning',         'Verification failed → Critical'],
 ];
 
 type Level = 'ok' | 'warning' | 'critical';
@@ -57,7 +46,18 @@ function remoteTargetStatusLabel(status: string, lastOkHours: number): string {
 }
 
 export function HealthChecks() {
-  const { healthReport, setupState, wizardConfig } = useApp();
+  const { healthReport, setupState, masterPasswordSet, refreshRealHealth, refreshReadiness } = useApp();
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await refreshRealHealth();
+      refreshReadiness();
+    } finally {
+      setRefreshing(false);
+    }
+  }
   const repo = setupState.kopia_repository;
 
   function backupLevel(): Level {
@@ -69,12 +69,12 @@ export function HealthChecks() {
   function remoteTargetLevel(): Level {
     const s = healthReport.remote_target_status;
     const hrs = healthReport.remote_target_last_ok_hours;
-    if (s === 'not_configured') return 'ok'; // local test mode
+    if (s === 'not_configured') return 'ok';
     if (s === 'reachable') return 'ok';
     if (s === 'quota_warning') return 'warning';
     if (s === 'auth_failed' || s === 'host_key_mismatch') return 'critical';
     if (s === 'unreachable') {
-      if (hrs < 0) return 'warning'; // never connected
+      if (hrs < 0) return 'warning';
       if (hrs > 72) return 'critical';
       if (hrs > 24) return 'warning';
       return 'ok';
@@ -83,32 +83,26 @@ export function HealthChecks() {
     return 'ok';
   }
 
-  function syncLevel(): Level {
-    // Syncthing is optional/legacy — negative means not configured → Ok
-    const h = healthReport.last_sync_age_hours;
-    if (h < 0) return 'ok';
-    if (h > 72) return 'critical';
-    if (h > 24) return 'warning';
-    return 'ok';
-  }
-
   function quotaLevel(): Level {
     if (healthReport.free_quota_percent < 5) return 'critical';
     if (healthReport.free_quota_percent < 15) return 'warning';
     return 'ok';
   }
+
   function drillLevel(): Level {
     if (healthReport.restore_drill_age_days < 0) return 'critical';
     if (healthReport.restore_drill_age_days > 30) return 'warning';
     return 'ok';
   }
+
   function peerLevel(): Level {
     const h = healthReport.peer_offline_hours;
-    if (h < 0) return 'ok'; // not configured
+    if (h < 0) return 'ok';
     if (h > 168) return 'critical';
     if (h > 24) return 'warning';
     return 'ok';
   }
+
   function repoCheckLevel(): Level {
     return healthReport.repository_check_ok ? 'ok' : 'critical';
   }
@@ -132,28 +126,37 @@ export function HealthChecks() {
     ['Restore drill age', drillLevel(), healthReport.restore_drill_age_days < 0 ? 'Never run' : `${healthReport.restore_drill_age_days} days ago`],
     ['Peer offline', peerLevel(), healthReport.peer_offline_hours < 0 ? 'No peer / local mode' : healthReport.peer_offline_hours === 0 ? 'Online' : `${healthReport.peer_offline_hours.toFixed(1)}h`],
     ['Repository verification', repoCheckLevel(), healthReport.repository_check_ok ? 'Passed' : 'FAILED'],
-    ['Syncthing mirror (legacy)', syncLevel(), healthReport.last_sync_age_hours < 0 ? 'Not configured' : `${healthReport.last_sync_age_hours.toFixed(1)}h ago`],
   ];
 
   const drillPassed = healthReport.restore_drill_age_days >= 0 && healthReport.restore_drill_age_days <= 30;
-  const retentionConfigured = wizardConfig !== null && wizardConfig.retention_keep_last >= 1;
-
-  // Remote repository reachable: reachable or not_configured (local test mode is allowed)
   const remoteReachable =
     healthReport.remote_target_status === 'reachable' ||
     setupState.remote_repository.status === 'reachable';
 
-  const gateStatus: boolean[] = [
-    repo.snapshot_count !== null && repo.snapshot_count > 0,
-    remoteReachable,
-    drillPassed,
-    drillPassed,
-    setupState.recovery_key_confirmed,
-    retentionConfigured,
-    healthReport.free_quota_percent >= 15,
-    overallLevel !== 'critical',
+  const gateChecks: Array<{ label: string; pass: boolean }> = [
+    {
+      label: 'Backup snapshot exists',
+      pass: repo.snapshot_count !== null && repo.snapshot_count > 0,
+    },
+    {
+      label: 'Remote encrypted repository reachable',
+      pass: remoteReachable,
+    },
+    {
+      label: 'Restore drill completed within 30 days',
+      pass: drillPassed,
+    },
+    {
+      label: 'Encryption password set',
+      pass: masterPasswordSet,
+    },
+    {
+      label: 'No critical health alerts',
+      pass: overallLevel !== 'critical',
+    },
   ];
-  const gatePassCount = gateStatus.filter(Boolean).length;
+  const gatePassCount = gateChecks.filter(c => c.pass).length;
+  const gateTotal = gateChecks.length;
 
   return (
     <div className="p-6 space-y-6 max-w-3xl">
@@ -162,7 +165,17 @@ export function HealthChecks() {
           <Shield size={18} className="text-sky-400" />
           <h1 className="text-base font-semibold text-slate-100">Health Checks</h1>
         </div>
-        <LevelBadge level={overallLevel} />
+        <div className="flex items-center gap-2">
+          <LevelBadge level={overallLevel} />
+          <button
+            onClick={() => { void handleRefresh(); }}
+            disabled={refreshing}
+            className="flex items-center gap-1 px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-xs text-slate-300 disabled:opacity-50 transition-colors"
+          >
+            {refreshing ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Live metrics */}
@@ -171,12 +184,7 @@ export function HealthChecks() {
         <div className="space-y-0">
           {metrics.map(([label, level, value]) => (
             <div key={label} className="flex items-center justify-between py-2 border-b border-slate-800/40 last:border-0">
-              <span className="text-sm text-slate-300">
-                {label}
-                {label.includes('legacy') && (
-                  <span className="ml-2 text-xs text-amber-500/60 font-normal">(optional)</span>
-                )}
-              </span>
+              <span className="text-sm text-slate-300">{label}</span>
               <div className="flex items-center gap-2">
                 <span className={`text-xs font-mono ${levelColor(level)}`}>{value}</span>
                 <LevelBadge level={level} />
@@ -188,17 +196,19 @@ export function HealthChecks() {
 
       {/* Protected gate */}
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Protected Status Gate (8 checks)</h3>
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">
+          Backup Readiness Checklist ({gateTotal} checks)
+        </h3>
         <div className="space-y-0">
-          {GATE_CHECKS.map((check, i) => (
-            <div key={check} className="flex items-center justify-between py-1.5 border-b border-slate-800/40 last:border-0">
-              <span className="text-sm text-slate-300">{check}</span>
+          {gateChecks.map(({ label, pass }) => (
+            <div key={label} className="flex items-center justify-between py-1.5 border-b border-slate-800/40 last:border-0">
+              <span className="text-sm text-slate-300">{label}</span>
               <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs border ${
-                gateStatus[i]
+                pass
                   ? 'bg-emerald-400/10 text-emerald-400 border-emerald-400/20'
                   : 'bg-amber-400/10 text-amber-400 border-amber-400/20'
               }`}>
-                {gateStatus[i]
+                {pass
                   ? <><CheckCircle size={10} />Pass</>
                   : <><AlertTriangle size={10} />Pending</>
                 }
@@ -208,13 +218,13 @@ export function HealthChecks() {
         </div>
         <div className="mt-3 pt-3 border-t border-slate-800/60 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {gatePassCount === 8
+            {gatePassCount === gateTotal
               ? <CheckCircle size={14} className="text-emerald-400" />
               : <XCircle size={14} className="text-slate-600" />
             }
-            <span className="text-xs text-slate-500">{gatePassCount} / 8 checks pass</span>
+            <span className="text-xs text-slate-500">{gatePassCount} / {gateTotal} checks pass</span>
           </div>
-          {gatePassCount < 8 && (
+          {gatePassCount < gateTotal && (
             <span className="text-xs text-amber-400/70">Protected status blocked</span>
           )}
         </div>

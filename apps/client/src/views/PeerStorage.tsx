@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   AlertTriangle, CheckCircle, ChevronDown, ChevronRight, ClipboardPaste,
-  Info, Loader2, Lock, RefreshCw, Server, Shield, ShieldCheck, Wifi, XCircle,
+  Eye, EyeOff, Info, Loader2, Lock, RefreshCw, Server, Shield, ShieldCheck, Wifi, XCircle,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import {
@@ -9,6 +9,7 @@ import {
   parseOwnerBundle,
   planKopiaSftpRepository,
   probeRemoteTarget,
+  setKopiaPassword,
   verifySftpTarget,
 } from '../lib/tauri-bridge';
 import type { FingerprintStatus, RemoteTargetProbeResponse, SftpRepositoryInitResult, SftpVerifyResult, SftpVerifyStatus } from '../lib/types';
@@ -137,7 +138,7 @@ function Field({
 // ── Main view ─────────────────────────────────────────────────────────────────
 
 export function PeerStorage() {
-  const { wizardConfigs, masterPasswordSet, updateRemoteRepositoryState, refreshReadiness } = useApp();
+  const { wizardConfigs, masterPasswordSet, setMasterPasswordSet, updateRemoteRepositoryState, refreshReadiness } = useApp();
 
   // Connection settings (pre-filled by bundle import or typed manually)
   const [overlayHost, setOverlayHost] = useState('');
@@ -172,6 +173,10 @@ export function PeerStorage() {
   const [initializing, setInitializing] = useState(false);
   const [initResult, setInitResult] = useState<SftpRepositoryInitResult | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
+
+  // Inline password entry (used when masterPasswordSet is false)
+  const [inlinePassword, setInlinePassword] = useState('');
+  const [showInlinePassword, setShowInlinePassword] = useState(false);
 
   // Planned commands
   const [commandPlan, setCommandPlan] = useState<{ label: string; display_command: string }[]>([]);
@@ -290,6 +295,18 @@ export function PeerStorage() {
     setInitResult(null);
     setInitError(null);
     try {
+      // If password not yet in state, store the inline password first.
+      if (!masterPasswordSet) {
+        const pw = inlinePassword.trim();
+        if (pw.length < 8) {
+          setInitError('Enter your backup encryption password (at least 8 characters) before connecting.');
+          setInitializing(false);
+          return;
+        }
+        await setKopiaPassword(pw);
+        setMasterPasswordSet(true);
+        setInlinePassword('');
+      }
       const result = await initializeKopiaSftpRepository(
         overlayHost.trim(),
         sftpUser.trim(),
@@ -315,7 +332,8 @@ export function PeerStorage() {
     overlayHost.trim() !== '' &&
     sftpUser.trim() !== '' &&
     sftpPath.trim() !== '' &&
-    !initializing;
+    !initializing &&
+    (masterPasswordSet || inlinePassword.trim().length >= 8);
 
   const tcpProbeSucceeded = probeResult?.status === 'tcp_port_reachable';
   const sftpVerified = verifyResult?.status === 'ok';
@@ -716,6 +734,42 @@ export function PeerStorage() {
           <div className="flex items-center gap-2 p-2 rounded border border-amber-500/15 bg-amber-500/5 text-xs text-amber-300/70">
             <Info size={11} className="flex-shrink-0" />
             Run SFTP Verification above before connecting to confirm auth and write access.
+          </div>
+        )}
+
+        {/* Inline password entry when password not yet set in this session */}
+        {!masterPasswordSet && !sftpConnected && (
+          <div className="space-y-2 p-3 rounded border border-sky-500/20 bg-sky-500/5">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-sky-300">
+              <Lock size={11} className="flex-shrink-0" />
+              Backup encryption password
+            </div>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Enter the password Kopia will use to encrypt your backups.
+              It is stored in the OS keychain and auto-loaded on future app starts —
+              you won&rsquo;t need to re-enter it unless you clear it.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type={showInlinePassword ? 'text' : 'password'}
+                value={inlinePassword}
+                onChange={e => setInlinePassword(e.target.value)}
+                placeholder="Choose a strong password (min 8 chars)"
+                autoComplete="new-password"
+                className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+              />
+              <button
+                type="button"
+                onClick={() => setShowInlinePassword(v => !v)}
+                className="px-2 text-slate-500 hover:text-slate-300"
+                title={showInlinePassword ? 'Hide' : 'Show'}
+              >
+                {showInlinePassword ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+            {inlinePassword.length > 0 && inlinePassword.length < 8 && (
+              <p className="text-xs text-amber-400/80">Use at least 8 characters.</p>
+            )}
           </div>
         )}
 

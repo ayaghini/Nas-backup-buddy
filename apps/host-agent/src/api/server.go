@@ -138,6 +138,7 @@ func (s *Server) Router() chi.Router {
 		r.Post("/api/v1/allocations/{allocId}/suspend", s.handleSuspend)
 		r.Post("/api/v1/allocations/{allocId}/resume", s.handleResume)
 		r.Post("/api/v1/allocations/{allocId}/retire", s.handleRetire)
+		r.Delete("/api/v1/allocations/{allocId}", s.handleDeleteAllocation)
 	})
 
 	return r

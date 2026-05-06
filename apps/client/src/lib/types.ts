@@ -301,6 +301,63 @@ export interface SetupDraftConfig {
   sftp_configured: boolean;
 }
 
+/** Lifecycle phase of a peer connection on the owner side. */
+export type PeerPhase =
+  | 'needs_invite'
+  | 'invite_invalid'
+  | 'needs_key'
+  | 'response_ready'
+  | 'waiting_for_host'
+  | 'sftp_verified'
+  | 'repo_ready'
+  | 'blocked';
+
+/**
+ * Persisted record of one peer match relationship — one per storage host we back up to.
+ * Sensitive material (private key content, passwords) stays on the Rust/OS side.
+ */
+export interface SavedPeer {
+  /** Stable local ID — uuid generated on creation, independent of invite contents. */
+  id: string;
+  /** matchId from the invite bundle (set once invite is parsed). */
+  matchId: string;
+  /** allocId from the invite bundle. */
+  allocId: string;
+  /** Human-readable name from the invite (e.g. "Alice's NAS"). */
+  connectionName: string;
+
+  // Invite
+  inviteJson: string;
+
+  // SFTP connection (populated from invite)
+  sftpHost: string;
+  /** User-supplied override when MagicDNS won't resolve cross-account. */
+  manualSftpHost: string;
+  sftpPort: number;
+  sftpUsername: string;
+  sftpPath: string;
+
+  // Key exchange
+  ownerDeviceLabel: string;
+  ownerPublicKey: string;
+  /** Path or keychain ref to the private key — never the key itself. */
+  privateKeyRef: string;
+  responseJson: string;
+  /** allocId for which host key has been confirmed out-of-band. */
+  hostKeyConfirmedForAllocId: string;
+
+  // Status (last known)
+  phase: PeerPhase;
+  lastProbeStatus: string;
+  lastSftpStatus: string;
+  lastRepoMessage: string;
+
+  // Timestamps
+  createdAt: string;
+  /** ISO timestamp of first successful repo connect. */
+  connectedAt: string | null;
+}
+
 /** Result from the probe_remote_target Tauri command. */
 export interface RemoteTargetProbeResponse {
   /** "tcp_port_reachable" means TCP port is open; SSH/SFTP auth is NOT verified. */
